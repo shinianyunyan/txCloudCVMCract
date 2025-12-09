@@ -1,12 +1,11 @@
 """
-工具函数模块
-提供通用的工具函数
+通用工具函数集合。
 
-包含功能：
-    - 日志配置
-    - 密码验证
-    - 数据格式化
-    - 区域和状态名称转换
+包含：
+    - 日志记录器初始化。
+    - 密码合规校验。
+    - 区域/状态名称映射。
+    - 预留的实例信息格式化入口。
 """
 import logging
 import os
@@ -16,32 +15,32 @@ from datetime import datetime
 
 def setup_logger(name: str = "CVM_Manager", log_file: str = "cvm_manager.log", level: str = "INFO") -> logging.Logger:
     """
-    设置日志记录器
-    
+    创建（或复用）带文件与控制台输出的日志记录器。
+
     Args:
-        name: 日志记录器名称
-        log_file: 日志文件路径
-        level: 日志级别
-    
+        name: 记录器名称。
+        log_file: 日志文件路径。
+        level: 日志级别（INFO/DEBUG/...）。
+
     Returns:
-        logging.Logger: 配置好的日志记录器
+        logging.Logger: 已配置好的记录器。
     """
     logger = logging.getLogger(name)
     logger.setLevel(getattr(logging, level.upper()))
     
-    # 避免重复添加handler
+    # 避免重复添加 handler
     if logger.handlers:
         return logger
     
-    # 文件处理器
+    # 文件处理器，完整持久化日志
     file_handler = logging.FileHandler(log_file, encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)
     
-    # 控制台处理器
+    # 控制台处理器，输出到终端
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
     
-    # 格式化
+    # 统一格式：时间-名称-级别-内容
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
@@ -57,13 +56,12 @@ def setup_logger(name: str = "CVM_Manager", log_file: str = "cvm_manager.log", l
 
 def validate_password(password: str) -> Tuple[bool, str]:
     """
-    验证密码是否符合腾讯云要求
-    
-    Args:
-        password: 待验证的密码
-    
-    Returns:
-        tuple[bool, str]: (是否有效, 错误信息)
+    校验密码是否符合腾讯云要求。
+
+    规则：
+        - 长度 8~30。
+        - 至少包含大写、小写、数字、特殊字符中的 3 类。
+    返回 (是否合规, 错误信息)。
     """
     if not password:
         return False, "密码不能为空"
@@ -90,28 +88,16 @@ def validate_password(password: str) -> Tuple[bool, str]:
 
 def format_instance_info(instance: Dict[str, Any]) -> Dict[str, Any]:
     """
-    格式化实例信息，便于显示
-    
-    Args:
-        instance: 原始实例信息
-    
-    Returns:
-        Dict[str, Any]: 格式化后的实例信息
+    预留实例信息格式化入口，便于后续扩展。
+
+    当前直接返回原数据，可按需要在此整理字段。
     """
-    # 这里可以根据实际API返回的数据结构进行格式化
+    # 如需新增展示字段或转换格式，可在此扩展
     return instance
 
 
 def get_region_name(region: str) -> str:
-    """
-    获取区域的中文名称
-    
-    Args:
-        region: 区域代码
-    
-    Returns:
-        str: 区域中文名称
-    """
+    """根据区域代码返回对应中文名，未知则回退原值。"""
     region_map = {
         "ap-beijing": "北京",
         "ap-shanghai": "上海",
@@ -139,15 +125,7 @@ def get_region_name(region: str) -> str:
 
 
 def get_instance_status_name(status: str) -> str:
-    """
-    获取实例状态的中文名称
-    
-    Args:
-        status: 状态代码
-    
-    Returns:
-        str: 状态中文名称
-    """
+    """根据实例状态码返回中文名，未知则回退原值。"""
     status_map = {
         "PENDING": "创建中",
         "LAUNCH_FAILED": "创建失败",

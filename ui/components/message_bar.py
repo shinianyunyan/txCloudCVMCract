@@ -1,7 +1,8 @@
 """
-消息提示条组件
-在主界面顶部居中显示错误、警告、成功等信息
-支持多个消息队列，自动管理位置
+消息提示条组件。
+
+用于在主窗口内以叠加方式展示多条错误/警告/成功/提示信息，
+自动处理消息队列、位置与定时隐藏。
 """
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton
 from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QPoint, pyqtSignal
@@ -10,9 +11,7 @@ import uuid
 
 
 class MessageItem(QWidget):
-    """
-    单个消息项组件
-    """
+    """单条消息组件，负责绘制背景、图标及关闭按钮。"""
     
     closed = pyqtSignal(object)  # 关闭时发出信号，传递自身
     
@@ -38,7 +37,7 @@ class MessageItem(QWidget):
             self.hide_timer.start(duration)
     
     def init_ui(self):
-        """初始化UI"""
+        """构建消息行的布局与关闭按钮。"""
         layout = QHBoxLayout()
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(12)
@@ -123,15 +122,11 @@ class MessageItem(QWidget):
             }}
         """)
         
-        # 设置消息标签的最大宽度，以便正确换行
-        # 宽度会在MessageBar的update_layout中设置
-        # 这里先设置一个合理的默认值，不限制宽度，让布局自然处理
-        
         # 调整大小以适应内容
         self.adjustSize()
     
     def close_message(self):
-        """关闭消息"""
+        """关闭消息并停止自动隐藏定时器。"""
         self.hide_timer.stop()
         self.closed.emit(self)
     
@@ -140,7 +135,7 @@ class MessageItem(QWidget):
         return self.height()
     
     def paintEvent(self, event):
-        """重写paintEvent，确保背景颜色正确绘制"""
+        """绘制圆角背景后交由父类渲染文本与按钮。"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         

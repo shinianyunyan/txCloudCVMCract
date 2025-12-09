@@ -1,5 +1,10 @@
 """
-腾讯云CVM实例管理核心类
+腾讯云 CVM 实例管理核心类。
+
+职责：
+    - 封装 CVM 常用操作：区域/可用区、镜像、机型、价格查询，实例创建/启动/关机/销毁/重置密码。
+    - 负责凭证与区域初始化，必要时切换客户端区域并提供资源不足兜底。
+    - 统一日志格式，便于排查 API 调用或资源状态问题。
 """
 import logging
 import time
@@ -17,9 +22,10 @@ except ImportError:
 
 
 class CVMManager:
-    """CVM实例管理器"""
+    """CVM 实例管理器，封装实例生命周期与查询操作。"""
     
     def __init__(self, secret_id, secret_key, region):
+        # 支持从配置管理器读取默认凭证与区域，参数缺省时兜底
         if _use_cfg_mgr and (not secret_id or not secret_key):
             cfg = get_api_config()
             self.secret_id = secret_id or cfg.get("secret_id") or SECRET_ID
@@ -36,6 +42,12 @@ class CVMManager:
         self._init_client(None)
     
     def _init_client(self, region):
+        """
+        初始化（或切换）CVM 客户端。
+
+        - region 为空则使用当前 region。
+        - 若传入新 region，会更新 self.region，后续调用保持一致。
+        """
         target_region = region or self.region
         cred = credential.Credential(self.secret_id, self.secret_key)
         http_profile = HttpProfile()
@@ -48,7 +60,7 @@ class CVMManager:
         self.logger.info(f"CVM客户端初始化成功，区域: {target_region}")
     
     def get_regions(self):
-        """获取可用区域列表"""
+        """获取可用区域列表，用于区域选择或资源不足时的兜底重试。"""
         try:
             req = models.DescribeRegionsRequest()
             resp = self.client.DescribeRegions(req)
@@ -59,10 +71,16 @@ class CVMManager:
             raise
     
     def get_type_configs(self, zone, cpu, memory, exact_match):
-        """获取实例机型配置列表"""
+        """
+        获取实例机型配置列表。
+
+        - exact_match=True：仅返回 CPU/内存完全匹配的机型。
+        - exact_match=False：返回不低于指定规格的机型，并按“距离”排序，首项最接近。
+        """
         try:
             req = models.DescribeInstanceTypeConfigsRequest()
             if zone:
+                # 如指定可用区，则过滤该可用区下的机型
                 f = models.Filter()
                 f.Name = "zone"
                 f.Values = [zone]
@@ -84,6 +102,7 @@ class CVMManager:
                 configs.append({"InstanceType": c.InstanceType, "CPU": c.CPU, "Memory": c.Memory, "Zone": c.Zone, "InstanceFamily": c.InstanceFamily})
             
             if not exact_match and cpu and memory and configs:
+                # 以“距离”排序，保证最接近的规格排在前面
                 configs.sort(key=lambda x: (x["CPU"] - cpu) ** 2 + (x["Memory"] - memory) ** 2)
             
             self.logger.info(f"获取到{len(configs)}个实例机型配置")
@@ -92,7 +111,7 @@ class CVMManager:
             raise
     
     def get_zones(self, region):
-        """获取指定区域的可用区列表"""
+        """获取指定区域的可用区列表，必要时切换客户端区域。"""
         try:
             target_region = region or self.region
             if target_region != self.region:
@@ -113,15 +132,11 @@ class CVMManager:
             raise
     
     def get_images(self, image_type, limit=100):
-        """获取镜像列表
-        
-        Args:
-            image_type: 镜像类型（PUBLIC_IMAGE / PRIVATE_IMAGE / SHARED_IMAGE / MARKET_IMAGE）
-            limit: 返回数量上限，默认100
-        """
+        """获取镜像列表（公共/私有/共享/市场），支持限制返回条数。"""
         try:
             req = models.DescribeImagesRequest()
             req.Limit = limit
+            # 过滤镜像类型
             f = models.Filter()
             f.Name = "image-type"
             f.Values = [image_type]
@@ -135,7 +150,12 @@ class CVMManager:
             raise
     
     def get_price(self, cpu, memory, region, image_id, zone, storage_size, bandwidth):
-        """查询实例价格（按量计费）"""
+        """
+        查询实例价格（按量计费）。
+
+        - 未指定可用区时，会取区域首个可用区。
+        - 若请求规格不可用，使用最接近的规格并记录日志，避免直接报错。
+        """
         try:
             if region != self.region:
                 self._init_client(region)
@@ -206,7 +226,12 @@ class CVMManager:
             raise
     
     def create(self, cpu, memory, region, password, image_id, instance_name, zone, count):
-        """创建实例（按量计费）"""
+        """
+        创建实例（按量计费）。
+
+        - 镜像/可用区缺省时自动选择（公共镜像首个、区域首个可用区）。
+        - 若指定规格在当前区域不足，后续会触发区域兜底重试。
+        """
         is_valid, error_msg = validate_password(password)
         if not is_valid:
             raise ValueError(f"密码验证失败: {error_msg}")
@@ -278,7 +303,7 @@ class CVMManager:
             raise
     
     def _create_fallback(self, cpu, memory, preferred_region, password, image_id, instance_name):
-        """资源不足时尝试其他区域"""
+        """资源不足时轮询其他区域尝试创建，全部失败则报错。"""
         self.logger.info(f"区域{preferred_region}资源不足，尝试其他区域...")
         regions = self.get_regions()
         for r_info in regions:
@@ -294,18 +319,24 @@ class CVMManager:
         raise ValueError("所有区域都无法创建实例")
     
     def get_instances(self, region):
-        """获取实例列表"""
+        """
+        获取实例列表。
+
+        - 若传入 region 且与当前不同，会临时切换客户端区域。
+        - 补充默认密码字段，便于 UI 直接展示/复制。
+        - 尝试从可用区前缀推断实例所属区域。
+        """
         try:
             if region and region != self.region:
                 self._init_client(region)
             
             req = models.DescribeInstancesRequest()
-            req.Limit = 100
+            req.Limit = 100  # 控制单次返回数量，避免超量
             resp = self.client.DescribeInstances(req)
             
             from config.config_manager import get_instance_config
             cfg = get_instance_config()
-            saved_pwd = cfg.get("default_password", "")
+            saved_pwd = cfg.get("default_password", "")  # 统一回填 UI 显示用密码
             
             instances = []
             for i in resp.InstanceSet:
@@ -318,6 +349,7 @@ class CVMManager:
                             instance_region = r
                             break
                 
+                # 公网优先，其次私网，缺省给空串
                 public_ips = getattr(i, "PublicIpAddresses", []) or []
                 private_ips = getattr(i, "PrivateIpAddresses", []) or []
                 ip = public_ips[0] if public_ips else (private_ips[0] if private_ips else "")
@@ -344,7 +376,7 @@ class CVMManager:
             raise
     
     def start(self, instance_ids):
-        """批量启动实例"""
+        """批量启动实例。"""
         try:
             req = models.StartInstancesRequest()
             req.InstanceIds = instance_ids
@@ -355,7 +387,13 @@ class CVMManager:
             raise
     
     def stop(self, instance_ids, force):
-        """批量停止实例"""
+        """
+        批量停止实例。
+
+        Args:
+            instance_ids: 实例 ID 列表
+            force: 是否强制关机（True 会强制，False 优雅停机）
+        """
         try:
             req = models.StopInstancesRequest()
             req.InstanceIds = instance_ids
@@ -380,7 +418,7 @@ class CVMManager:
             raise ValueError(f"密码验证失败: {error_msg}")
         
         try:
-            instances = self.get_instances(None)
+            instances = self.get_instances(None)  # 查询当前区域全部实例，判断运行状态
             running_instance_ids = []
             has_running = False
             for instance in instances:
@@ -393,7 +431,7 @@ class CVMManager:
             req.InstanceIds = instance_ids
             req.Password = password
             if has_running:
-                req.ForceStop = True
+                req.ForceStop = True  # 运行中实例需先关机才能重置密码
                 self.logger.info(f"检测到运行中的实例，使用强制关机方式重置密码")
             
             resp = self.client.ResetInstancesPassword(req)
@@ -414,7 +452,7 @@ class CVMManager:
             raise
     
     def terminate(self, instance_ids):
-        """销毁实例（按量计费）"""
+        """销毁实例（按量计费），支持单个或列表形式传入。"""
         try:
             if isinstance(instance_ids, str):
                 instance_ids = [instance_ids]
@@ -427,7 +465,7 @@ class CVMManager:
             raise
     
     def create_image(self, instance_id, image_name, image_desc):
-        """创建自定义镜像"""
+        """创建自定义镜像，将实例快照化为可复用镜像。"""
         try:
             req = models.CreateImageRequest()
             req.InstanceId = instance_id

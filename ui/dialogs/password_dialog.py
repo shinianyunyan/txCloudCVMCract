@@ -1,6 +1,7 @@
 """
-密码输入对话框
-用于批量重置密码时输入和验证密码
+密码输入对话框。
+
+场景：批量重置实例密码时，输入并即时校验新密码。
 """
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QLabel, QPushButton, QDialogButtonBox, QMessageBox
 from PyQt5.QtCore import Qt
@@ -8,7 +9,7 @@ from utils.utils import validate_password, setup_logger
 
 
 class PasswordDialog(QDialog):
-    """密码输入对话框"""
+    """密码输入与校验对话框，支持实时提示与一致性检查。"""
     
     def __init__(self, parent=None, is_windows=False):
         super().__init__(parent)
@@ -16,7 +17,7 @@ class PasswordDialog(QDialog):
         self.init_ui()
     
     def init_ui(self):
-        """初始化UI"""
+        """构建密码输入表单、提示信息与确认按钮。"""
         self.setWindowTitle("重置密码")
         self.setModal(True)
         self.resize(400, 250)

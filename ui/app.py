@@ -1,10 +1,10 @@
 """
-UI 应用主文件
-定义主窗口类，负责窗口的创建、菜单栏、状态栏等
+应用主窗口模块。
 
-重要提示：
-    - 窗口宽高设置在 init_ui() 方法中（第19-42行）
-    - 可以通过修改窗口大小比例来调整窗口尺寸
+主要职责：
+    - 提供 `CVMApp`，承载主界面、菜单栏和状态栏。
+    - 初始化窗口尺寸、样式与主业务组件。
+    - 管理加载状态展示与退出确认对话框。
 """
 import os
 from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QMessageBox, QMenuBar, QMenu, QAction, QApplication, QDialog, QLabel, QPushButton, QHBoxLayout, QStatusBar
@@ -16,10 +16,12 @@ from ui.styles import get_style_sheet
 
 class CVMApp(QMainWindow):
     """
-    CVM 管理应用主窗口类
-    
-    继承自 QMainWindow，提供主窗口框架
-    包含菜单栏、状态栏和中央组件区域
+    CVM 管理应用主窗口。
+
+    继承 QMainWindow，负责：
+        - 初始化主界面和尺寸。
+        - 创建菜单栏、状态栏。
+        - 承载业务主界面 MainWindow。
     """
     
     def __init__(self):
@@ -32,64 +34,55 @@ class CVMApp(QMainWindow):
     
     def init_ui(self):
         """
-        初始化UI界面
-        
-        注意：窗口宽高设置在此方法中
+        初始化界面元素：
+            - 依据屏幕尺寸设置窗口大小和最小尺寸。
+            - 应用统一样式。
+            - 嵌入主业务窗口并创建菜单与状态栏。
         """
         self.setWindowTitle("腾讯云 CVM 实例管理工具")
-        
-        # ========== 窗口宽高设置区域 ==========
-        # 获取屏幕尺寸并自适应窗口大小
+        # 依据屏幕尺寸计算窗口大小与位置，保证在大屏下保持足够宽度
         screen = QApplication.primaryScreen()
         screen_geometry = screen.geometry()
         screen_width = screen_geometry.width()
         screen_height = screen_geometry.height()
         
-        # 计算窗口大小（占屏幕的95%）
-        # 修改这里的 0.95 可以调整窗口大小比例（0.5 = 50%, 0.95 = 95%）
+        # 默认使用屏幕宽度 95%、高度 90%，兼顾视野与可用空间
         window_width = int(screen_width * 0.95)
         window_height = int(screen_height * 0.9)
         
-        # 确保最小宽度足够显示所有按钮（至少1400像素）
+        # 确保主界面控件不拥挤：宽度至少 1400 像素，高度不低于屏幕 60%
         min_window_width = max(1400, int(screen_width * 0.7))
         if window_width < min_window_width:
             window_width = min_window_width
         
-        # 计算窗口位置（居中）
+        # 居中显示
         x = (screen_width - window_width) // 2
         y = (screen_height - window_height) // 2
         
-        # 设置窗口位置和大小
-        # 参数：x坐标, y坐标, 宽度, 高度
-        # 如果想固定窗口大小，可以直接写：self.setGeometry(100, 100, 1400, 900)
         self.setGeometry(x, y, window_width, window_height)
         
-        # 设置最小窗口大小（确保按钮能完全显示）
-        # 最小宽度至少1400像素，最小高度为屏幕的60%
         min_width = max(1400, int(screen_width * 0.7))
         min_height = int(screen_height * 0.6)
         self.setMinimumSize(min_width, min_height)
-        # ========== 窗口宽高设置区域结束 ==========
         
-        # 设置窗口图标
+        # 设置窗口图标，兼容旧路径
         icon_path = os.path.join(os.path.dirname(__file__), "ui", "assets", "logo.ico")
         if not os.path.exists(icon_path):
-            # 兼容旧路径
             icon_path = os.path.join(os.path.dirname(__file__), "ui", "logo.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         
-        # 应用样式（根据DPI自动调整）
+        # 应用自定义样式（内部已考虑 DPI 缩放）
         self.setStyleSheet(get_style_sheet())
         
-        # 创建主窗口组件
+        # 嵌入主业务窗口
         self.main_window = MainWindow(self)
         self.setCentralWidget(self.main_window)
         
-        # 创建菜单栏（需要在main_window创建之后）
+        # 初始化菜单栏（依赖 main_window 方法）
         self.create_menu_bar()
         
-        # 设置状态栏
+        # 配置状态栏初始文案
         self.status_label = QLabel('<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 欢迎使用腾讯云 CVM 实例管理工具')
         self.status_label.setTextFormat(Qt.RichText)
         self.statusBar().addPermanentWidget(self.status_label)
@@ -100,19 +93,17 @@ class CVMApp(QMainWindow):
     
     def create_menu_bar(self):
         """
-        创建菜单栏
-        
-        包含三个主菜单：
-            - 文件菜单：刷新、设置、退出
-            - 实例菜单：创建实例、批量操作
-            - 帮助菜单：关于信息
+        创建菜单栏：
+            - 文件：刷新、设置、实例配置、退出。
+            - 实例：创建实例、批量开关机、批量重置密码。
+            - 帮助：关于。
         """
         menubar = self.menuBar()
         
-        # ========== 文件菜单 ==========
+        # 文件菜单
         file_menu = menubar.addMenu("文件(&F)")
         
-        # 刷新功能（快捷键：F5）
+        # 刷新（F5）
         refresh_action = QAction("刷新(&R)", self)
         refresh_action.setShortcut("F5")
         refresh_action.triggered.connect(self.main_window.refresh_instances)
@@ -120,7 +111,7 @@ class CVMApp(QMainWindow):
         
         file_menu.addSeparator()
         
-        # 设置功能（快捷键：Ctrl+,）
+        # 设置（Ctrl+,）
         settings_action = QAction("设置(&S)", self)
         settings_action.setShortcut("Ctrl+,")
         settings_action.triggered.connect(self.main_window.show_settings)
@@ -132,16 +123,16 @@ class CVMApp(QMainWindow):
         
         file_menu.addSeparator()
         
-        # 退出功能（快捷键：Ctrl+Q）
+        # 退出（Ctrl+Q）
         exit_action = QAction("退出(&X)", self)
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
         
-        # ========== 实例菜单 ==========
+        # 实例菜单
         instance_menu = menubar.addMenu("实例(&I)")
         
-        # 创建实例（快捷键：Ctrl+N）
+        # 创建实例（Ctrl+N）
         create_action = QAction("创建实例(&N)", self)
         create_action.setShortcut("Ctrl+N")
         create_action.triggered.connect(self.main_window.create_instances)
@@ -162,7 +153,7 @@ class CVMApp(QMainWindow):
         reset_pwd_action.triggered.connect(self.main_window.batch_reset_password)
         instance_menu.addAction(reset_pwd_action)
         
-        # ========== 帮助菜单 ==========
+        # 帮助菜单
         help_menu = menubar.addMenu("帮助(&H)")
         
         about_action = QAction("关于(&A)", self)

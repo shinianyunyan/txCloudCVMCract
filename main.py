@@ -1,14 +1,13 @@
 """
-主程序入口文件
-启动图形用户界面
+主程序入口。
+
+职责：
+    - 设置高 DPI 相关环境变量和 Qt 属性，确保高分屏显示清晰。
+    - 初始化 PyQt5 应用对象并设置应用基础信息（名称、组织、图标）。
+    - 创建并显示主窗口 `CVMApp`。
 
 运行方式：
     python main.py
-
-功能：
-    - 初始化 PyQt5 应用程序
-    - 启用高DPI支持（适配高分辨率屏幕）
-    - 创建并显示主窗口
 """
 import sys
 import os
@@ -16,8 +15,7 @@ from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon
 
-# 启用高DPI支持（适配高分辨率屏幕）
-# 这可以让程序在高分辨率屏幕上显示更清晰
+# 启用高 DPI 支持，让界面在高分屏上保持清晰
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
 QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
@@ -26,6 +24,7 @@ from config.config_manager import ensure_config_file
 
 if __name__ == "__main__":
     ensure_config_file()
+    # 创建 Qt 应用实例并开启高 DPI 相关属性
     app = QApplication(sys.argv)
     app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)

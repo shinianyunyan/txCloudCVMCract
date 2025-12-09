@@ -1,6 +1,10 @@
 """
-实例配置对话框
-用于配置创建实例时的默认参数
+实例配置对话框。
+
+用途：
+    - 配置创建实例所需的默认参数（规格、区域、镜像、密码等）。
+    - 支持后台拉取区域与公共镜像，并按平台分类筛选。
+    - 提供价格预估与参数校验。
 """
 import json
 import os
@@ -20,7 +24,7 @@ except ImportError:
 
 
 class ConfigLoadThread(QThread):
-    """配置加载线程"""
+    """后台加载配置、区域和公共镜像的线程。"""
     data_loaded = pyqtSignal(dict, list, list)
     error_occurred = pyqtSignal(str)
     
@@ -57,7 +61,14 @@ class ConfigLoadThread(QThread):
 
 
 class InstanceConfigDialog(QDialog):
-    """实例配置对话框"""
+    """
+    用于设置默认实例参数的对话框。
+
+    负责：
+        - 加载已有配置并回填表单。
+        - 拉取区域/镜像数据并按平台分类。
+        - 校验输入、展示价格并持久化配置。
+    """
     
     def __init__(self, cvm_manager=None, parent=None):
         super().__init__(parent)

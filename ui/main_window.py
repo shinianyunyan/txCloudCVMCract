@@ -1,12 +1,10 @@
 """
-主窗口组件
-定义主窗口的内容区域，包含工具栏、实例列表等
+主窗口内容区域。
 
-功能：
-    - 显示实例统计信息
-    - 提供操作按钮（刷新、创建、批量操作等）
-    - 显示实例列表表格
-    - 处理实例的增删改查操作
+职责：
+    - 提供实例列表、统计信息、搜索与批量操作入口。
+    - 负责实例创建、启动、关机、销毁、密码重置等交互逻辑。
+    - 统一触发顶部消息条，反馈成功或异常信息。
 """
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QLineEdit, QGroupBox, QGridLayout, QFrame, QMainWindow, QSpinBox, QDialog
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
@@ -29,10 +27,10 @@ except ImportError:
 
 class MainWindow(QWidget):
     """
-    主窗口内容组件
-    
-    这是主窗口的中央区域，包含所有功能组件
-    注意：窗口本身的宽高设置在 ui/app.py 的 CVMApp.init_ui() 方法中
+    主窗口内容组件。
+
+    作为 `CVMApp` 的中央部件，组织工具栏、统计信息和实例表格，
+    并承载所有与实例相关的操作入口。
     """
     
     def __init__(self, parent=None):
@@ -45,14 +43,18 @@ class MainWindow(QWidget):
         self.auto_refresh_on_start()
     
     def init_ui(self):
-        """初始化UI"""
+        """
+        构建主界面布局：
+            - 顶部统计信息。
+            - 工具栏（刷新、创建、实例配置、搜索、设置）。
+            - 批量操作区（开机/关机/销毁/重置密码）。
+            - 实例表格。
+        """
         main_layout = QVBoxLayout()
         main_layout.setSpacing(12)
         main_layout.setContentsMargins(12, 12, 12, 12)
         
-        # 消息提示条（浮动窗口，显示在主界面顶部居中）
-        # 注意：MessageBar 现在是浮动窗口，不需要添加到布局中
-        # 获取主窗口（CVMApp）作为父窗口
+        # 创建浮动消息条（挂在顶层主窗口，统一展示提醒）
         parent_window = self.parent()
         while parent_window and not isinstance(parent_window, QMainWindow):
             parent_window = parent_window.parent()

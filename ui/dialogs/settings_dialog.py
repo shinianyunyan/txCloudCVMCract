@@ -1,5 +1,9 @@
 """
-设置对话框
+API 凭证设置对话框。
+
+职责：
+    - 录入与保存腾讯云 API SecretId/SecretKey 和默认区域。
+    - 可选验证凭证有效性（后台线程）。
 """
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton, QDialogButtonBox, QMessageBox, QLabel, QApplication, QHBoxLayout
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
@@ -16,7 +20,7 @@ except ImportError:
 
 
 class SettingsDialog(QDialog):
-    """设置对话框"""
+    """API 凭证与默认区域设置对话框。"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -25,10 +29,10 @@ class SettingsDialog(QDialog):
     
     def init_ui(self):
         """
-        初始化UI
-        
-        弹窗大小设置：宽度600像素，高度350像素
-        如需调整，修改下面的 resize() 参数
+        构建设置界面：
+            - 基本信息输入：SecretId、SecretKey、默认区域。
+            - 凭证验证入口（可选）。
+            - 统一按钮区与提示信息。
         """
         self.setWindowTitle("设置")
         self.setModal(True)

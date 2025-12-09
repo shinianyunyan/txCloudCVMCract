@@ -1,16 +1,14 @@
 """
-UI 样式定义模块
-定义应用程序的界面样式（QSS样式表）
+样式表生成模块。
 
 功能：
-    - 根据屏幕DPI自动调整字体大小和间距
-    - 提供统一的界面风格
-    - 支持高分辨率屏幕适配
+    - 根据 DPI 动态缩放字体、间距、高度。
+    - 统一按钮、输入框、表格、菜单、滚动条等控件样式。
+    - 为下拉框使用自定义箭头图标（向下/向上）。
 
-样式说明：
-    - 使用QSS（Qt Style Sheets）语法，类似CSS
-    - 所有CSS大括号需要转义为 {{ 和 }}（因为使用.format()方法）
-    - 变量通过 .format() 方法注入
+说明：
+    - 使用 QSS（Qt Style Sheets）语法，通过 `.format()` 注入变量。
+    - QSS 内的大括号需成对写为 `{{` 和 `}}`。
 """
 import os
 from PyQt5.QtWidgets import QApplication
@@ -44,13 +42,11 @@ def get_dpi_scale():
 
 def get_style_sheet():
     """
-    获取样式表，根据DPI自动调整字体大小
-    
-    根据当前屏幕的DPI自动计算合适的字体大小和间距
-    使界面在高分辨率屏幕上也能清晰显示
-    
-    Returns:
-        str: 完整的QSS样式表字符串
+    生成整套 QSS 样式字符串。
+
+    - 按屏幕 DPI 缩放字体、间距与控件高度。
+    - 引用自定义的下拉箭头图标（展开向下，展开中向上）。
+    - 统一窗口、按钮、表格、输入框、菜单、滚动条的外观。
     """
     scale = get_dpi_scale()
     assets_dir = os.path.join(os.path.dirname(__file__), "assets")

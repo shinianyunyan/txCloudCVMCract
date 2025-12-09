@@ -1,5 +1,9 @@
 """
-实例列表组件
+实例列表组件。
+
+职责：
+    - 以表格形式展示实例核心信息。
+    - 支持行选择、批量操作勾选、复制 IP/密码、显示/隐藏密码。
 """
 import os
 from PyQt5.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QToolButton, QWidget, QHBoxLayout, QLabel, QStyledItemDelegate
@@ -17,19 +21,19 @@ class InstanceList(QTableWidget):
         self.init_ui()
     
     def init_ui(self):
-        """初始化UI"""
-        # 设置列
+        """初始化表格列配置、交互模式与基础样式。"""
+        # 设置列标题与顺序
         columns = ["选择", "实例ID", "实例名称", "状态", "IP", "密码", "CPU", "内存(GB)", "区域", "可用区", "创建时间"]
         self.setColumnCount(len(columns))
         self.setHorizontalHeaderLabels(columns)
         
-        # 设置选择模式
+        # 设置选择/编辑行为：整行选中、不可编辑、交替行色
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.setAlternatingRowColors(True)
         self.setFocusPolicy(Qt.NoFocus)
         
-        # 设置第一列（复选框列）的委托，确保复选框居中
+        # 第一列复选框使用委托保持居中
         class CenteredCheckboxDelegate(QStyledItemDelegate):
             def initStyleOption(self, option, index):
                 super().initStyleOption(option, index)
@@ -37,7 +41,7 @@ class InstanceList(QTableWidget):
         
         self.setItemDelegateForColumn(0, CenteredCheckboxDelegate(self))
         
-        # 设置列宽（可手动调整，自动适配内容）
+        # 默认列宽（用户仍可手动调整）
         header = self.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive)
         header.setStretchLastSection(False)
@@ -54,11 +58,11 @@ class InstanceList(QTableWidget):
         self.setColumnWidth(9, 120)
         self.setColumnWidth(10, 180)
         
-        # 设置行高
+        # 隐藏行头，保持网格线
         self.verticalHeader().setVisible(False)
         self.setShowGrid(True)
         
-        # 设置表格样式（移除虚线框，美化选中效果）
+        # 基础样式：去除虚线框，突出选中行
         self.setStyleSheet("""
             QTableWidget {
                 border: 1px solid #e0e0e0;
@@ -97,7 +101,7 @@ class InstanceList(QTableWidget):
         """)
     
     def update_instances(self, instances):
-        """更新实例列表"""
+        """根据实例数据刷新表格行，并附加复制/显示密码控件。"""
         self.setRowCount(0)
         
         for instance in instances:
@@ -159,7 +163,7 @@ class InstanceList(QTableWidget):
             self.setItem(row, 10, QTableWidgetItem(str(created_time)))
     
     def _create_copy_cell(self, text):
-        """创建带复制功能的单元格"""
+        """创建带复制按钮的 IP 单元格。"""
         container = QWidget()
         layout = QHBoxLayout()
         layout.setContentsMargins(4, 0, 4, 0)
@@ -209,7 +213,7 @@ class InstanceList(QTableWidget):
         return container
     
     def _create_password_cell(self, password, masked):
-        """创建带显示/隐藏和复制功能的密码单元格"""
+        """创建可显示/隐藏与复制密码的单元格。"""
         container = QWidget()
         layout = QHBoxLayout()
         layout.setContentsMargins(4, 0, 4, 0)
