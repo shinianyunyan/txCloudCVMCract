@@ -52,4 +52,6 @@ cvm_manager.log
 *.db
 *.sqlite
 
+# API说明文档
+API说明文档/
 
