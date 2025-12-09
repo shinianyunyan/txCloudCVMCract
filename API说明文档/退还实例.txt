@@ -1,0 +1,144 @@
+退还实例
+最近更新时间：2025-09-19 11:38:43
+
+我的收藏
+本页目录：
+1. 接口描述
+2. 输入参数
+3. 输出参数
+4. 示例
+示例1 销毁指定ID实例
+5. 开发者资源
+腾讯云 API 平台
+API Inspector
+SDK
+命令行工具
+6. 错误码
+1. 接口描述
+接口请求域名： cvm.tencentcloudapi.com 。
+
+本接口 (TerminateInstances) 用于主动退还实例。
+
+不再使用的实例，可通过本接口主动退还。
+按量计费的实例通过本接口可直接退还；包年包月实例如符合退还规则，也可通过本接口主动退还。
+包年包月实例首次调用本接口，实例将被移至回收站，再次调用本接口，实例将被销毁，且不可恢复。按量计费实例调用本接口将被直接销毁。
+包年包月实例首次调用本接口，入参中包含ReleasePrepaidDataDisks时，包年包月数据盘同时也会被移至回收站。
+支持批量操作，每次请求批量实例的上限为100。
+批量操作时，所有实例的付费类型必须一致。
+默认接口请求频率限制：10次/秒。
+
+推荐使用 API Explorer
+点击调试
+API Explorer 提供了在线调用、签名验证、SDK 代码生成和快速检索接口等能力。您可查看每次调用的请求内容和返回结果以及自动生成 SDK 调用示例。
+2. 输入参数
+以下请求参数列表仅列出了接口请求参数和部分公共参数，完整公共参数列表见 公共请求参数。
+
+参数名称	必选	类型	描述
+Action	是	String	公共参数，本接口取值：TerminateInstances。
+Version	是	String	公共参数，本接口取值：2017-03-12。
+Region	是	String	公共参数，详见产品支持的 地域列表。
+InstanceIds.N	是	Array of String	一个或多个待操作的实例ID。可通过 DescribeInstances 接口返回值中的InstanceId获取。每次请求批量实例的上限为100。
+示例值：['ins-2pajzo4q']
+ReleaseAddress	否	Boolean	释放弹性IP。EIP2.0下，仅提供主网卡下首个EIP，EIP类型限定在HighQualityEIP、AntiDDoSEIP、EIPv6、HighQualityEIPv6这几种类型。默认行为不释放。
+
+示例值：true
+默认值：false
+示例值：true
+ReleasePrepaidDataDisks	否	Boolean	释放实例挂载的包年包月数据盘。true表示销毁实例同时释放包年包月数据盘，false表示只销毁实例。
+默认值：false
+示例值：true
+3. 输出参数
+参数名称	类型	描述
+RequestId	String	唯一请求 ID，由服务端生成，每次请求都会返回（若请求因其他原因未能抵达服务端，则该次请求不会获得 RequestId）。定位问题时需要提供该次请求的 RequestId。
+4. 示例
+示例1 销毁指定ID实例
+用于销毁指定ID的一个或多个实例
+
+输入示例
+POST / HTTP/1.1
+Host: cvm.tencentcloudapi.com
+Content-Type: application/json
+X-TC-Action: TerminateInstances
+<公共请求参数>
+
+{
+    "InstanceIds": [
+        "ins-3jaw1j8m"
+    ]
+}
+输出示例
+{
+    "Response": {
+        "RequestId": "9a2f76a2-3b5b-4760-a90b-eff0c611b360"
+    }
+}
+5. 开发者资源
+腾讯云 API 平台
+腾讯云 API 平台 是综合 API 文档、错误码、API Explorer 及 SDK 等资源的统一查询平台，方便您从同一入口查询及使用腾讯云提供的所有 API 服务。
+
+API Inspector
+用户可通过 API Inspector 查看控制台每一步操作关联的 API 调用情况，并自动生成各语言版本的 API 代码，也可前往 API Explorer 进行在线调试。
+
+SDK
+云 API 3.0 提供了配套的开发工具集（SDK），支持多种编程语言，能更方便的调用 API。
+
+Tencent Cloud SDK 3.0 for Python: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for Java: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for PHP: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for Go: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for Node.js: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for .NET: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for C++: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for Ruby: CNB, GitHub, Gitee
+命令行工具
+Tencent Cloud CLI 3.0
+6. 错误码
+以下仅列出了接口业务逻辑相关的错误码，其他错误码详见 公共错误码。
+
+错误码	描述
+FailedOperation.InvalidInstanceApplicationRole	不支持操作的applicationRole实例
+FailedOperation.InvalidInstanceApplicationRoleEmr	请求不支持EMR的实例ins-xxxxxxxx。
+FailedOperation.Unreturnable	实例无法退还。
+InternalError.TradeUnknownError	内部错误
+InternalServerError	操作内部错误。
+InvalidAccount.UnpaidOrder	账户有未支付订单。
+InvalidInstance.NotSupported	不被支持的实例。
+InvalidInstanceId.Malformed	无效实例ID。指定的实例ID格式错误。例如实例ID长度错误ins-1122。
+InvalidInstanceId.NotFound	没有找到相应实例。
+InvalidInstanceNotSupportedPrepaidInstance	该实例不满足包月退还规则。
+InvalidParameterValue	参数取值错误。
+InvalidParameterValue.InstanceIdMalformed	实例ID不合要求，请提供规范的实例ID，类似ins-xxxxxxxx，字母x代表小写字符或数字。
+InvalidParameterValue.InvalidAppIdFormat	无效的appid。
+InvalidParameterValue.LimitExceeded	参数值数量超过限制。
+InvalidParameterValue.NotSupported	不支持的操作。
+LimitExceeded.UserReturnQuota	退还失败，退还配额已达上限。
+MissingParameter	缺少参数错误。
+MutexOperation.TaskRunning	同样的任务正在运行。
+OperationDenied.InstanceOperationInProgress	实例正在执行其他操作，请稍后再试。
+UnauthorizedOperation.InvalidToken	请确认Token是否有效。
+UnauthorizedOperation.MFAExpired	您无法进行当前操作，请确认多因子认证（MFA）是否失效。
+UnauthorizedOperation.MFANotFound	没有权限进行此操作，请确认是否存在多因子认证（MFA）。
+UnsupportedOperation	操作不支持。
+UnsupportedOperation.InstanceChargeType	请求不支持该实例计费模式
+UnsupportedOperation.InstanceMixedPricingModel	不支持混合付费模式。
+UnsupportedOperation.InstanceStateBanning	该子机处于封禁状态，请联系相关人员处理。
+UnsupportedOperation.InstanceStateEnterRescueMode	请求不支持进入救援模式的实例
+UnsupportedOperation.InstanceStateEnterServiceLiveMigrate	不支持状态为 ENTER_SERVICE_LIVE_MIGRATE.的实例 ins-xxxxxx 。
+UnsupportedOperation.InstanceStateExitRescueMode	请求不支持正在退出救援模式的实例
+UnsupportedOperation.InstanceStateExitServiceLiveMigrate	不支持状态为 EXIT_SERVICE_LIVE_MIGRATE.的实例 ins-xxxxxx 。
+UnsupportedOperation.InstanceStateFreezing	操作不支持已冻结的实例。
+UnsupportedOperation.InstanceStateIsolating	请求不支持正在隔离状态的实例。
+UnsupportedOperation.InstanceStateLaunchFailed	不支持操作创建失败的实例。
+UnsupportedOperation.InstanceStatePending	请求不支持创建未完成的实例
+UnsupportedOperation.InstanceStateRebooting	请求不支持正在重启的实例
+UnsupportedOperation.InstanceStateStarting	实例开机中，不允许该操作。
+UnsupportedOperation.InstanceStateStopping	请求不支持正在关机的实例
+UnsupportedOperation.InstanceStateTerminated	不支持已销毁的实例
+UnsupportedOperation.InstanceStateTerminating	请求不支持正在销毁的实例
+UnsupportedOperation.InstancesProtected	不支持已启用销毁保护的实例，请先到设置实例销毁保护，关闭实例销毁保护，然后重试。
+UnsupportedOperation.InvalidInstancesOwner	用户无权限操作当前实例。
+UnsupportedOperation.RedHatInstanceTerminateUnsupported	实例使用商业操作系统，不支持退还。
+UnsupportedOperation.RedHatInstanceUnsupported	请求不支持操作系统为RedHat的实例。
+UnsupportedOperation.Region	不支持该地域
+UnsupportedOperation.SpecialInstanceType	请求不支持特殊机型的实例
+UnsupportedOperation.UserLimitOperationExceedQuota	用户限额操作的配额不足。

@@ -1,0 +1,585 @@
+创建实例
+最近更新时间：2025-11-14 01:16:21
+
+我的收藏
+本页目录：
+1. 接口描述
+2. 输入参数
+3. 输出参数
+4. 示例
+示例1 独享子机购买
+示例2 包年包月实例购买
+示例3 最简单参数的购买
+示例4 按小时后付费实例购买
+示例5 指定私有网络ip创建实例
+5. 开发者资源
+腾讯云 API 平台
+API Inspector
+SDK
+命令行工具
+6. 错误码
+1. 接口描述
+接口请求域名： cvm.tencentcloudapi.com 。
+
+本接口 (RunInstances) 用于创建一个或多个指定配置的实例。
+
+实例创建成功后将自动开机启动，实例状态变为“运行中”。
+预付费实例的购买会预先扣除本次实例购买所需金额，按小时后付费实例购买会预先冻结本次实例购买一小时内所需金额，在调用本接口前请确保账户余额充足。
+调用本接口创建实例，支持代金券自动抵扣（注意，代金券不可用于抵扣后付费冻结金额），详情请参考代金券选用规则。
+本接口允许购买的实例数量遵循CVM实例购买限制，所创建的实例和官网入口创建的实例共用配额。
+本接口为异步接口，当创建实例请求下发成功后会返回一个实例ID列表和一个RequestId，此时创建实例操作并未立即完成。在此期间实例的状态将会处于“PENDING”，实例创建结果可以通过调用 DescribeInstancesStatus 接口查询，如果实例状态(InstanceState)由“PENDING(创建中)”变为“RUNNING(运行中)”，则代表实例创建成功，“LAUNCH_FAILED”代表实例创建失败。
+默认接口请求频率限制：10次/秒。
+
+推荐使用 API Explorer
+点击调试
+API Explorer 提供了在线调用、签名验证、SDK 代码生成和快速检索接口等能力。您可查看每次调用的请求内容和返回结果以及自动生成 SDK 调用示例。
+2. 输入参数
+以下请求参数列表仅列出了接口请求参数和部分公共参数，完整公共参数列表见 公共请求参数。
+
+参数名称	必选	类型	描述
+Action	是	String	公共参数，本接口取值：RunInstances。
+Version	是	String	公共参数，本接口取值：2017-03-12。
+Region	是	String	公共参数，详见产品支持的 地域列表。
+InstanceChargeType	否	String	实例计费类型。
+PREPAID：预付费，即包年包月
+
+POSTPAID_BY_HOUR：按小时后付费
+
+CDHPAID：独享子机（基于专用宿主机创建，宿主机部分的资源不收费）
+
+SPOTPAID：竞价付费
+
+CDCPAID：专用集群付费
+
+默认值：POSTPAID_BY_HOUR。
+示例值：POSTPAID_BY_HOUR
+InstanceChargePrepaid	否	InstanceChargePrepaid	预付费模式，即包年包月相关参数设置。通过该参数可以指定包年包月实例的购买时长、是否设置自动续费等属性。若指定实例的付费模式为预付费则该参数必传。
+Placement	否	Placement	实例所在的位置。通过该参数可以指定实例所属可用区，所属项目，所属宿主机（在专用宿主机上创建子机时指定）等属性。
+注：如果您不指定LaunchTemplate参数，则Placement为必选参数。若同时传递Placement和LaunchTemplate，则默认覆盖LaunchTemplate中对应的Placement的值。
+InstanceType	否	String	实例机型。不同实例机型指定了不同的资源规格。
+
+对于付费模式为PREPAID或POSTPAID_BY_HOUR的实例创建，具体取值可通过调用接口DescribeInstanceTypeConfigs来获得最新的规格表或参见实例规格描述。若不指定该参数，则系统将根据当前地域的资源售卖情况动态指定默认机型。
+
+对于付费模式为CDHPAID的实例创建，该参数以"CDH_"为前缀，根据CPU和内存配置生成，具体形式为：CDH_XCXG，例如对于创建CPU为1核，内存为1G大小的专用宿主机的实例，该参数应该为CDH_1C1G。
+
+示例值：S5.LARGE4
+ImageId	否	String	指定有效的镜像ID，格式形如img-xxx。镜像类型分为四种：
+公共镜像
+自定义镜像
+共享镜像
+服务市场镜像
+
+可通过以下方式获取可用的镜像ID：
+公共镜像、自定义镜像、共享镜像的镜像ID可通过登录控制台查询；服务镜像市场的镜像ID可通过云市场查询。
+通过调用接口 DescribeImages ，传入InstanceType获取当前机型支持的镜像列表，取返回信息中的ImageId字段。
+
+注：如果您不指定LaunchTemplate参数，则ImageId为必选参数。若同时传递ImageId和LaunchTemplate，则默认覆盖LaunchTemplate中对应的ImageId的值。
+示例值：img-irmer45l
+SystemDisk	否	SystemDisk	实例系统盘配置信息。若不指定该参数，则按照系统默认值进行分配。
+DataDisks.N	否	Array of DataDisk	实例数据盘配置信息。若不指定该参数，则默认不购买数据盘。支持购买的时候指定21块数据盘，其中最多包含1块LOCAL_BASIC数据盘或者LOCAL_SSD数据盘，最多包含20块CLOUD_BASIC数据盘、CLOUD_PREMIUM数据盘或者CLOUD_SSD数据盘。
+VirtualPrivateCloud	否	VirtualPrivateCloud	私有网络相关信息配置。通过该参数可以指定私有网络的ID，子网ID等信息。若在此参数中指定了私有网络IP，即表示每个实例的主网卡IP；同时，InstanceCount参数必须与私有网络IP的个数一致且不能大于20。
+InternetAccessible	否	InternetAccessible	公网带宽相关信息设置。若不指定该参数，则默认公网带宽为0Mbps。
+InstanceCount	否	Integer	购买实例数量。包年包月实例取值范围：[1，500]，按量计费实例取值范围：[1，500]。默认取值：1。指定购买实例的数量不能超过用户所能购买的剩余配额数量，具体配额相关限制详见CVM实例购买限制。
+示例值：1
+MinCount	否	Integer	指定创建实例的最小数量，取值范围为不大于InstanceCount的正整数。
+指定最小数量时，承诺最少创建MinCount台实例，并尽量创建InstanceCount台实例。
+库存不足以满足最小数量时，API 会返回库存不足最小数量的错误信息。
+仅对支持部分发货的账号、区域和计费模式（包年包月、按量计费、竞价实例、按量包销）生效。
+示例值：1
+InstanceName	否	String	实例显示名称。
+不指定实例显示名称则默认显示‘未命名’。
+购买多台实例，如果指定模式串{R:x}，表示生成数字[x, x+n-1]，其中n表示购买实例的数量，例如server_{R:3}，购买1台时，实例显示名称为server_3；购买2台时，实例显示名称分别为server_3，server_4。支持指定多个模式串{R:x}。
+购买多台实例，如果不指定模式串，则在实例显示名称添加后缀1、2...n，其中n表示购买实例的数量，例如server_，购买2台时，实例显示名称分别为server_1，server_2。
+最多支持128个字符（包含模式串）。
+
+示例值：server_{R:3}
+LoginSettings	否	LoginSettings	实例登录设置。通过该参数可以设置实例的登录方式密码、密钥或保持镜像的原始登录设置。默认情况下会随机生成密码，并以站内信方式知会到用户。
+SecurityGroupIds.N	否	Array of String	实例所属安全组。该参数可以通过调用 DescribeSecurityGroups 的返回值中的 SecurityGroupId 字段来获取。若不指定该参数，则绑定指定项目下的默认安全组，如默认安全组不存在则将自动创建。
+
+示例值：["sg-ajhn9qtq"]
+EnhancedService	否	EnhancedService	增强服务。通过该参数可以指定是否开启云安全、云监控等服务。若不指定该参数，则默认公共镜像开启云监控、云安全服务；自定义镜像与镜像市场镜像默认不开启云监控，云安全服务，而使用镜像里保留的服务。
+ClientToken	否	String	用于保证请求幂等性的字符串。该字符串由客户生成，需保证不同请求之间唯一，最大值不超过64个ASCII字符。若不指定该参数，则无法保证请求的幂等性。
+示例值：system-f3827db9-c58a-49cc-bf10-33fc1923a34a
+HostName	否	String	实例主机名。
+点号（.）和短横线（-）不能作为 HostName 的首尾字符，不能连续使用。
+
+Windows 实例：主机名名字符长度为[2, 15]，允许字母（不限制大小写）、数字和短横线（-）组成，不支持点号（.），不能全是数字。
+
+其他类型（Linux 等）实例：主机名字符长度为[2, 60]，允许支持多个点号，点之间为一段，每段允许字母（不限制大小写）、数字和短横线（-）组成。
+
+购买多台实例，如果指定模式串{R:x}，表示生成数字[x, x+n-1]，其中n表示购买实例的数量，例如server{R:3}，购买1台时，实例主机名为server3；购买2台时，实例主机名分别为server3，server4。支持指定多个模式串{R:x}。
+
+购买多台实例，如果不指定模式串，则在实例主机名添加后缀1、2...n，其中n表示购买实例的数量，例如server，购买2台时，实例主机名分别为server1，server2。
+
+示例值：MyHostName
+ActionTimer	否	ActionTimer	定时任务。通过该参数可以为实例指定定时任务，目前仅支持定时销毁。
+DisasterRecoverGroupIds.N	否	Array of String	置放群组id，仅支持指定一个。
+示例值：["sg-efil73jd"]
+TagSpecification.N	否	Array of TagSpecification	标签描述列表。通过指定该参数可以同时绑定标签到相应的云服务器、云硬盘实例。
+InstanceMarketOptions	否	InstanceMarketOptionsRequest	实例的市场相关选项，如竞价实例相关参数，若指定实例的付费模式为竞价付费但没有传递该参数时，默认按当前固定折扣价格出价。
+UserData	否	String	提供给实例使用的用户数据，需要以 base64 方式编码，支持的最大数据大小为 16KB。关于获取此参数的详细介绍，请参阅Windows和Linux启动时运行命令。
+示例值：TXlVc2VyRGF0YQo=
+Metadata	否	Metadata	自定义metadata，支持创建 CVM 时添加自定义元数据键值对。
+注：内测中。
+DryRun	否	Boolean	是否只预检此次请求。
+true：发送检查请求，不会创建实例。检查项包括是否填写了必需参数，请求格式，业务限制和云服务器库存。
+如果检查不通过，则返回对应错误码；
+如果检查通过，则返回RequestId.
+false（默认）：发送正常请求，通过检查后直接创建实例
+示例值：false
+CpuTopology	否	CpuTopology	描述了实例CPU拓扑结构的相关信息。若不指定该参数，则按系统资源情况决定。
+CamRoleName	否	String	CAM角色名称。可通过 DescribeRoleList 接口返回值中的RoleName获取。
+示例值：testroleName001
+HpcClusterId	否	String	高性能计算集群ID。若创建的实例为高性能计算实例，需指定实例放置的集群，否则不可指定。
+示例值：hpc-a5n666lo
+LaunchTemplate	否	LaunchTemplate	实例启动模板。
+DedicatedClusterId	否	String	指定专用集群创建。
+示例值：cluster-gbo27yc4
+ChcIds.N	否	Array of String	指定CHC物理服务器来创建CHC云主机。
+示例值：["chc-kwf9mhzf"]
+DisableApiTermination	否	Boolean	实例销毁保护标志，表示是否允许通过api接口删除实例。取值范围：
+true：表示开启实例保护，不允许通过api接口删除实例
+
+false：表示关闭实例保护，允许通过api接口删除实例
+
+
+默认取值：false。
+示例值：false
+EnableJumboFrame	否	Boolean	实例是否开启巨型帧，取值范围：
+true：表示实例开启巨型帧，只有支持巨型帧的机型可设置为true。
+false：表示实例关闭巨型帧，只有支持巨型帧的机型可设置为false。
+支持巨型帧的实例规格： 实例规格
+示例值：false
+3. 输出参数
+参数名称	类型	描述
+InstanceIdSet	Array of String	当通过本接口来创建实例时会返回该参数，表示一个或多个实例ID。返回实例ID列表并不代表实例创建成功，可根据 DescribeInstances 接口查询返回的InstancesSet中对应实例的ID的状态来判断创建是否完成；如果实例状态由“PENDING(创建中)”变为“RUNNING(运行中)”，则为创建成功。
+示例值：["ins-rn79mzt1"]
+RequestId	String	唯一请求 ID，由服务端生成，每次请求都会返回（若请求因其他原因未能抵达服务端，则该次请求不会获得 RequestId）。定位问题时需要提供该次请求的 RequestId。
+4. 示例
+示例1 独享子机购买
+实例所在位置为上海二区，在专用宿主机host-q88gab4i上创建，付费模式为独享子机付费，镜像ID为：img-pmqg1cw7，实例配置为：1C1G，50G大小高性能云系统盘，挂载100G大小高性能云数据盘，私有网络，公网付费模式为流量按小时后付费，外网带宽上限10Mbps，分配公网IP，实例命名为QCLOUD-TEST，设置登录密码为Qcloud@TestApi123++，安装云监控云安全，购买数量为1台。
+
+输入示例
+POST / HTTP/1.1
+Host: cvm.tencentcloudapi.com
+Content-Type: application/json
+X-TC-Action: RunInstances
+<公共请求参数>
+
+{
+    "SystemDisk": {
+        "DiskSize": 50,
+        "DiskType": "CLOUD_PREMIUM"
+    },
+    "InstanceCount": 1,
+    "Placement": {
+        "HostIds": [
+            "host-q88gab4i"
+        ],
+        "Zone": "ap-shanghai-2"
+    },
+    "LoginSettings": {
+        "Password": "Qcloud@TestApi123++"
+    },
+    "ImageId": "img-pmqg1cw7",
+    "InstanceChargeType": "CDHPAID",
+    "EnhancedService": {
+        "SecurityService": {
+            "Enabled": true
+        },
+        "MonitorService": {
+            "Enabled": true
+        }
+    },
+    "InternetAccessible": {
+        "PublicIpAssigned": true,
+        "InternetChargeType": "TRAFFIC_POSTPAID_BY_HOUR",
+        "InternetMaxBandwidthOut": 10
+    },
+    "InstanceName": "QCLOUD-TEST",
+    "InstanceType": "CDH_1C1G",
+    "DataDisks": [
+        {
+            "DiskSize": 100,
+            "DiskType": "CLOUD_PREMIUM"
+        }
+    ]
+}
+输出示例
+{
+    "Response": {
+        "InstanceIdSet": [
+            "ins-0s7wsh5x"
+        ],
+        "RequestId": "3c140219-cfe9-470e-b241-907877d6fb03"
+    }
+}
+示例2 包年包月实例购买
+实例所在位置为上海二区，付费模式为包年包月，购买一个月，到期自动续费，镜像ID为：img-pmqg1cw7，选择机型为：64C256G标准型(S5.16XLARGE256)，50G大小高性能云系统盘，挂载100G大小高性能云数据盘，私有网络，公网付费模式为流量按小时后付费，外网带宽上限10Mbps，分配公网IP，实例命名为QCLOUD-TEST，设置登录密码为Qcloud@TestApi123++，安装云监控云安全，购买数量为1台。
+
+输入示例
+POST / HTTP/1.1
+Host: cvm.tencentcloudapi.com
+Content-Type: application/json
+X-TC-Action: RunInstances
+<公共请求参数>
+
+{
+    "SystemDisk": {
+        "DiskSize": 50,
+        "DiskType": "CLOUD_PREMIUM"
+    },
+    "InstanceCount": 1,
+    "Placement": {
+        "Zone": "ap-shanghai-2"
+    },
+    "LoginSettings": {
+        "Password": "Qcloud@TestApi123++"
+    },
+    "ImageId": "img-pmqg1cw7",
+    "InstanceChargeType": "PREPAID",
+    "EnhancedService": {
+        "SecurityService": {
+            "Enabled": true
+        },
+        "MonitorService": {
+            "Enabled": true
+        }
+    },
+    "InternetAccessible": {
+        "PublicIpAssigned": true,
+        "InternetChargeType": "TRAFFIC_POSTPAID_BY_HOUR",
+        "InternetMaxBandwidthOut": 10
+    },
+    "InstanceChargePrepaid": {
+        "RenewFlag": "NOTIFY_AND_AUTO_RENEW",
+        "Period": 1
+    },
+    "InstanceName": "QCLOUD-TEST",
+    "InstanceType": "S5.16XLARGE256",
+    "DataDisks": [
+        {
+            "DiskSize": 100,
+            "DiskType": "CLOUD_PREMIUM"
+        }
+    ]
+}
+输出示例
+{
+    "Response": {
+        "InstanceIdSet": [
+            "ins-bfw5zq3y"
+        ],
+        "RequestId": "3c140219-cfe9-470e-b241-907877d6fb03"
+    }
+}
+示例3 最简单参数的购买
+只传必传的Zone和镜像ID，其他均采用系统默认值，具体配置如下：实例所在位置为上海二区，镜像ID为：img-pmqg1cw7。
+
+输入示例
+POST / HTTP/1.1
+Host: cvm.tencentcloudapi.com
+Content-Type: application/json
+X-TC-Action: RunInstances
+<公共请求参数>
+
+{
+    "Placement": {
+        "Zone": "ap-shanghai-2"
+    },
+    "ImageId": "img-pmqg1cw7"
+}
+输出示例
+{
+    "Response": {
+        "InstanceIdSet": [
+            "ins-1vogaxgk"
+        ],
+        "RequestId": "3c140219-cfe9-470e-b241-907877d6fb03"
+    }
+}
+示例4 按小时后付费实例购买
+实例所在位置为上海二区，付费模式为按小时后付费，镜像ID为：img-pmqg1cw7，选择机型为：64C256G标准型(S5.16XLARGE256)，50G大小高性能云系统盘，挂载100G大小高性能云数据盘，私有网络，公网付费模式为流量按小时后付费，外网带宽上限10Mbps，分配公网IP，实例命名为QCLOUD-TEST，设置登录密码为Qcloud@TestApi123++，安装云监控云安全，购买数量为1台。
+
+输入示例
+POST / HTTP/1.1
+Host: cvm.tencentcloudapi.com
+Content-Type: application/json
+X-TC-Action: RunInstances
+<公共请求参数>
+
+{
+    "SystemDisk": {
+        "DiskSize": 50,
+        "DiskType": "CLOUD_PREMIUM"
+    },
+    "InstanceCount": 1,
+    "Placement": {
+        "Zone": "ap-shanghai-2"
+    },
+    "LoginSettings": {
+        "Password": "Qcloud@TestApi123++"
+    },
+    "ImageId": "img-pmqg1cw7",
+    "InstanceChargeType": "POSTPAID_BY_HOUR",
+    "EnhancedService": {
+        "SecurityService": {
+            "Enabled": true
+        },
+        "MonitorService": {
+            "Enabled": true
+        }
+    },
+    "InternetAccessible": {
+        "PublicIpAssigned": true,
+        "InternetChargeType": "TRAFFIC_POSTPAID_BY_HOUR",
+        "InternetMaxBandwidthOut": 10
+    },
+    "InstanceName": "QCLOUD-TEST",
+    "InstanceType": "S5.16XLARGE256",
+    "DataDisks": [
+        {
+            "DiskSize": 100,
+            "DiskType": "CLOUD_PREMIUM"
+        }
+    ]
+}
+输出示例
+{
+    "Response": {
+        "InstanceIdSet": [
+            "ins-32kcaqoa"
+        ],
+        "RequestId": "3c140219-cfe9-470e-b241-907877d6fb03"
+    }
+}
+示例5 指定私有网络ip创建实例
+实例所在位置为上海二区，付费模式为按小时后付费，镜像ID为：img-dkwyg6sr，选择机型为：64C256G标准型(S5.16XLARGE256)，50G大小高性能云系统盘，私有网络，vpcId为1urkhbj4，子网ID为dcs9x3gz，指定私有网络ip为10.0.0.18，10.0.0.19，购买数量为2台。
+
+输入示例
+POST / HTTP/1.1
+Host: cvm.tencentcloudapi.com
+Content-Type: application/json
+X-TC-Action: RunInstances
+<公共请求参数>
+
+{
+    "VirtualPrivateCloud": {
+        "SubnetId": "subnet-dcs9x3gz",
+        "VpcId": "vpc-1urkhbj4",
+        "PrivateIpAddresses": [
+            "10.0.0.19",
+            "10.0.0.18"
+        ]
+    },
+    "InstanceCount": 2,
+    "Placement": {
+        "Zone": "ap-shanghai-2"
+    },
+    "SystemDisk": {
+        "DiskSize": 50,
+        "DiskType": "CLOUD_PREMIUM"
+    },
+    "ImageId": "img-dkwyg6sr",
+    "InstanceType": "S5.16XLARGE256"
+}
+输出示例
+{
+    "Response": {
+        "InstanceIdSet": [
+            "ins-0s7wsh5x",
+            "ins-03lw8hok"
+        ],
+        "RequestId": "3c14def19-cfes-470e-b241-90787u6jf5uj"
+    }
+}
+5. 开发者资源
+腾讯云 API 平台
+腾讯云 API 平台 是综合 API 文档、错误码、API Explorer 及 SDK 等资源的统一查询平台，方便您从同一入口查询及使用腾讯云提供的所有 API 服务。
+
+API Inspector
+用户可通过 API Inspector 查看控制台每一步操作关联的 API 调用情况，并自动生成各语言版本的 API 代码，也可前往 API Explorer 进行在线调试。
+
+SDK
+云 API 3.0 提供了配套的开发工具集（SDK），支持多种编程语言，能更方便的调用 API。
+
+Tencent Cloud SDK 3.0 for Python: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for Java: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for PHP: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for Go: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for Node.js: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for .NET: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for C++: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for Ruby: CNB, GitHub, Gitee
+命令行工具
+Tencent Cloud CLI 3.0
+6. 错误码
+以下仅列出了接口业务逻辑相关的错误码，其他错误码详见 公共错误码。
+
+错误码	描述
+AccountQualificationRestrictions	该请求账户未通过资格审计。
+AuthFailure.CamRoleNameAuthenticateFailed	角色名鉴权失败
+FailedOperation.DisasterRecoverGroupNotFound	未找到指定的容灾组
+FailedOperation.IllegalTagKey	标签键存在不合法字符
+FailedOperation.IllegalTagValue	标签值存在不合法字符。
+FailedOperation.InquiryPriceFailed	询价失败
+FailedOperation.NoAvailableIpAddressCountInSubnet	子网可用IP已耗尽。
+FailedOperation.PromotionalRegionRestriction	暂无法在此国家/地区提供该服务。
+FailedOperation.SecurityGroupActionFailed	安全组操作失败。
+FailedOperation.SnapshotSizeLargerThanDataSize	快照容量大于磁盘大小，请选用更大的磁盘空间。
+FailedOperation.SnapshotSizeLessThanDataSize	不支持快照size小于云盘size。
+FailedOperation.TagKeyReserved	请求中指定的标签键为系统预留标签，禁止创建
+InstancesQuotaLimitExceeded	表示当前创建的实例个数超过了该账户允许购买的剩余配额数。
+InternalError.TradeUnknownError	内部错误
+InvalidAccount.InsufficientBalance	账户余额不足。
+InvalidClientToken.TooLong	指定的ClientToken字符串长度超出限制，必须小于等于64字节。
+InvalidHostId.Malformed	无效CDH ID。指定的CDH ID格式错误。例如ID长度错误host-1122。
+InvalidHostId.NotFound	指定的HostId不存在，或不属于该请求账号所有。
+InvalidImageId.Malformed	错误的镜像Id格式。
+InvalidImageId.NotFound	未找到该镜像。
+InvalidInstance.NotSupported	不被支持的实例。
+InvalidInstanceName.TooLong	指定的InstanceName字符串长度超出限制，必须小于等于60字节。
+InvalidInstanceType.Malformed	指定InstanceType参数格式不合法。
+InvalidKeyPairId.Malformed	无效密钥对ID。指定的密钥对ID格式错误，例如 ID 长度错误skey-1122。
+InvalidParameter.CdcNotSupported	不支持参数CdcId。
+InvalidParameter.EdgeZoneMissInternetAccessible	边缘可用区指定三网外网IP参数需要先指定主ip外网IP参数。
+InvalidParameter.HostIdCustomizedInstanceTypeNotSupport	指定的CDH母机不支持自定义类型的子机规格
+InvalidParameter.HostIdInstanceTypeNotSupport	指定的CDH母机不支持该子机机型规格
+InvalidParameter.HostIdStandardInstanceTypeNotSupport	指定的CDH母机不支持标准类型的子机规格
+InvalidParameter.HostIdStatusNotSupport	该主机当前状态不支持该操作。
+InvalidParameter.InstanceImageNotSupport	当前接口不支持实例镜像。
+InvalidParameter.InstanceTypeSupportedHostNotFound	不存在支持指定子机规格的CDH母机
+InvalidParameter.InternetAccessibleNotSupported	不支持设置公网带宽相关信息。
+InvalidParameter.InvalidIpFormat	指定的私有网络ip格式不正确。
+InvalidParameter.LackCoreCountOrThreadPerCore	CoreCount和ThreadPerCore必须同时提供。
+InvalidParameter.OnlySupportForEdgeZone	仅是边缘可用区支持这个参数。
+InvalidParameter.ParameterConflict	不支持同时指定密钥登录和保持镜像登录方式。
+InvalidParameter.SnapshotNotFound	指定的快照不存在。
+InvalidParameter.SpecialParameterForSpecialAccount	这个参数需要开启白名单才可以使用。
+InvalidParameterCombination	表示参数组合不正确。
+InvalidParameterValue	参数取值错误。
+InvalidParameterValue.BandwidthPackageIdMalformed	共享带宽包ID不合要求，请提供规范的共享带宽包ID，类似bwp-xxxxxxxx，字母x代表小写字符或者数字。
+InvalidParameterValue.BandwidthPackageIdNotFound	请确认指定的带宽包是否存在。
+InvalidParameterValue.BandwidthPackageIspNotMatch	带宽包所属的运营商和运营商参数不匹配。
+InvalidParameterValue.BandwidthPackageZoneNotMatch	带宽包所属的可用区和指定的可用区不匹配。
+InvalidParameterValue.CamRoleNameMalformed	CamRoleName不合要求，只允许包含英文字母、数字或者 +=,.@_- 字符。
+InvalidParameterValue.ChcHostsNotFound	找不到对应的CHC物理服务器。
+InvalidParameterValue.CloudSsdDataDiskSizeTooSmall	SSD云硬盘为数据盘时，购买大小不得小于100GB
+InvalidParameterValue.CoreCountValue	核心计数不合法。
+InvalidParameterValue.DedicatedClusterNotSupportedChargeType	CDC不支持指定的计费模式。
+InvalidParameterValue.Duplicate	参数值重复。
+InvalidParameterValue.DuplicateTags	重复标签。
+InvalidParameterValue.ElasticNetworkNotExist	弹性网卡数据不存在
+InvalidParameterValue.ElasticNetworkVpcSubnetMismatch	弹性网卡数据vpc子网不匹配,必须为同vpc不同子网
+InvalidParameterValue.ExternalIpQuotaLimited	实例的申请的外网IP个数超过了这种规格实例的外网ip配额。
+InvalidParameterValue.HpcClusterIdZoneIdNotMatch	您的高性能计算集群已经绑定其他可用区，不能购买当前可用区机器。
+InvalidParameterValue.IPAddressMalformed	IP格式非法。
+InvalidParameterValue.IllegalHostName	HostName参数值不合法
+InvalidParameterValue.IncorrectFormat	传参格式不对。
+InvalidParameterValue.InstanceTypeNotFound	指定机型不存在
+InvalidParameterValue.InstanceTypeNotSupportElasticNetworks	实例类型不支持弹性网卡数据
+InvalidParameterValue.InstanceTypeNotSupportHpcCluster	实例类型不可加入高性能计算集群。
+InvalidParameterValue.InstanceTypeRequiredHpcCluster	高性能计算实例需指定对应的高性能计算集群。
+InvalidParameterValue.InsufficientOffering	竞价数量不足。
+InvalidParameterValue.InsufficientPrice	竞价失败。
+InvalidParameterValue.InvalidAppIdFormat	无效的appid。
+InvalidParameterValue.InvalidImageForGivenInstanceType	镜像ID不支持指定的实例机型。
+InvalidParameterValue.InvalidImageFormat	当前镜像为RAW格式，无法创建CVM，建议您选择其他镜像。
+InvalidParameterValue.InvalidImageId	镜像不允许执行该操作
+InvalidParameterValue.InvalidImageOsName	当前地域不支持指定镜像所包含的操作系统。
+InvalidParameterValue.InvalidImageState	镜像被其他操作占用，请检查，并稍后重试。
+InvalidParameterValue.InvalidIpFormat	IP地址不符合规范
+InvalidParameterValue.InvalidNetworkInterfaceId	指定的弹性网卡id非vrdma网卡
+InvalidParameterValue.InvalidParameterMinCount	参数MinCount的值必须小于InstanceCount
+InvalidParameterValue.InvalidPassword	无效密码。指定的密码不符合密码复杂度限制。例如密码长度不符合限制等。
+InvalidParameterValue.InvalidTimeFormat	时间格式不合法。
+InvalidParameterValue.InvalidUserDataFormat	UserData格式错误, 需要base64编码格式
+InvalidParameterValue.InvalidVpcIdSubnetIdNotFound	这个特别的VpcId or SubnetId在弹性网库数据结构未发现
+InvalidParameterValue.IspNotSupportForEdgeZone	边缘可用区不支持这个运营商。
+InvalidParameterValue.IspValueRepeated	重复指定了运营商参数值。
+InvalidParameterValue.KeyPairNotFound	请确认密钥是否存在。
+InvalidParameterValue.LaunchTemplateIdMalformed	实例启动模板ID格式错误，请提供规范的实例启动模板ID，类似lt-xxxxxxxx，字母x代表小写字符或者数字。
+InvalidParameterValue.LaunchTemplateIdNotExisted	实例启动模板ID不存在。
+InvalidParameterValue.LaunchTemplateNotFound	实例启动模板未找到。
+InvalidParameterValue.LaunchTemplateVersion	无效的实例启动模板版本号。
+InvalidParameterValue.LimitExceeded	参数值数量超过限制。
+InvalidParameterValue.MustDhcpEnabledVpc	参数值必须为开启DHCP的VPC
+InvalidParameterValue.MustEnabledIsRdma	参数值必须为开启弹性rdma接口
+InvalidParameterValue.NotCdcSubnet	子网不属于该cdc集群。
+InvalidParameterValue.Range	无效参数值。参数值取值范围不合法。
+InvalidParameterValue.SnapshotIdMalformed	快照ID不合要求，请提供规范的快照ID，类似snap-xxxxxxxx，字母x代表小写字符或者数字
+InvalidParameterValue.SubnetIdMalformed	子网ID不合要求，请提供规范的子网ID，类似subnet-xxxxxxxx，字母x代表小写字符或者数字
+InvalidParameterValue.SubnetIdZoneIdNotMatch	子网ID所在可用区与实例所在区不匹配。
+InvalidParameterValue.SubnetNotExist	创建失败，您指定的子网不存在，请您重新指定
+InvalidParameterValue.TagKeyNotFound	指定的标签不存在。
+InvalidParameterValue.TagQuotaLimitExceeded	标签配额超限。
+InvalidParameterValue.ThreadPerCoreValue	每核心线程数不合法。
+InvalidParameterValue.TooLarge	参数值超过最大限制。
+InvalidParameterValue.VpcIdMalformed	VPC IDxxx不合要求，请提供规范的Vpc ID， 类似vpc-xxxxxxxx，字母x代表小写字符或者数字。
+InvalidParameterValue.VpcIdNotExist	指定的VpcId不存在。
+InvalidParameterValue.VpcIdSubnetIdNotMatch	指定的VpcId和SubnetId不匹配。
+InvalidParameterValue.VpcIdZoneIdNotMatch	VPC网络与实例不在同一可用区
+InvalidParameterValue.VpcNotSupportIpv6Address	该VPC不支持ipv6。
+InvalidParameterValue.ZoneNotSupported	请求不支持该可用区
+InvalidPassword	无效密码。指定的密码不符合密码复杂度限制。例如密码长度不符合限制等。
+InvalidPeriod	无效时长。目前只支持时长：[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 24, 36]，单位：月。
+InvalidPermission	账户不支持该操作。
+InvalidProjectId.NotFound	无效的项目ID，指定的项目ID不存在。
+InvalidSecurityGroupId.NotFound	指定的安全组ID不存在。
+InvalidZone.MismatchRegion	指定的zone不存在。
+LimitExceeded.CvmInstanceQuota	已达到可购买实例的配额上限。
+LimitExceeded.CvmsVifsPerSecGroupLimitExceeded	安全组关联云主机弹性网卡配额超限。
+LimitExceeded.DisasterRecoverGroup	指定置放群组配额不足。
+LimitExceeded.IPv6AddressNum	IP数量超过网卡上限。
+LimitExceeded.InstanceEniNumLimit	实例指定的弹性网卡数目超过了实例弹性网卡数目配额。
+LimitExceeded.InstanceQuota	当前配额不足够生产指定数量的实例
+LimitExceeded.PrepayQuota	预付费实例已购买数量已达到最大配额，请提升配额后重试。
+LimitExceeded.PrepayUnderwriteQuota	包销付费实例已购买数量已达到最大配额。
+LimitExceeded.SingleUSGQuota	安全组限额不足
+LimitExceeded.SpotQuota	竞价实例类型配额不足
+LimitExceeded.UserSpotQuota	竞价实例配额不足
+LimitExceeded.VpcSubnetNum	子网IP不足
+MissingParameter	缺少参数错误。
+MissingParameter.DPDKInstanceTypeRequiredVPC	DPDK实例机型要求VPC网络
+MissingParameter.MonitorService	该实例类型必须开启云监控服务
+OperationDenied.AccountNotSupported	不支持该账户的操作。
+OperationDenied.ChcInstallCloudImageWithoutDeployNetwork	不允许未配置部署网络的CHC安装云上镜像。
+OperationDenied.NotBandwidthShiftUpUserApplyEdgeZoneEip	非带宽上移用户不允许申请边缘可用区外网IP。
+ResourceInsufficient.AvailabilityZoneSoldOut	该可用区已售罄
+ResourceInsufficient.CidrBlock	网段资源不足。
+ResourceInsufficient.CloudDiskSoldOut	指定的云盘规格已售罄
+ResourceInsufficient.CloudDiskUnavailable	云盘参数不符合规范
+ResourceInsufficient.DisasterRecoverGroupCvmQuota	实例个数超过容灾组的配额
+ResourceInsufficient.InsufficientOfferingMinimum	库存不满足最小数量。
+ResourceInsufficient.SpecifiedInstanceType	指定的实例类型库存不足。
+ResourceNotFound.HpcCluster	高性能计算集群不存在。
+ResourceNotFound.KeyPairNotFound	指定密钥对不存在。
+ResourceNotFound.NoDefaultCbs	无可用的缺省类型的CBS资源。
+ResourceNotFound.NoDefaultCbsWithReason	无可用的缺省类型的CBS资源。
+ResourceUnavailable.InstanceType	该可用区不售卖此机型
+ResourcesSoldOut.EipInsufficient	公网IP已售罄。
+ResourcesSoldOut.SpecifiedInstanceType	指定的实例类型已售罄。
+UnauthorizedOperation.InvalidToken	请确认Token是否有效。
+UnsupportedOperation	操作不支持。
+UnsupportedOperation.BandwidthPackageIdNotSupported	指定的实例付费模式或者网络付费模式不支持共享带宽包
+UnsupportedOperation.HibernationOsVersion	当前的镜像不支持休眠。
+UnsupportedOperation.InstanceStateIsolating	请求不支持正在隔离状态的实例。
+UnsupportedOperation.InstanceTypeNotSupportConfidentiality	实例类型不支持设置Confidentiality 状态
+UnsupportedOperation.InstanceTypeNotSupportGridLicence	实例类型不支持设置GridDriverService 状态
+UnsupportedOperation.InstanceTypeNotSupportJumboFrame	实例类型不支持设置EnableJumboFrame 状态
+UnsupportedOperation.InstancesEnableJumboWithoutReboot	不支持不重启情况下修改Jumbo Frame状态
+UnsupportedOperation.InvalidDisk	不支持指定的磁盘
+UnsupportedOperation.InvalidRegionDiskEncrypt	指定的地域不支持加密盘。
+UnsupportedOperation.KeyPairUnsupportedWindows	密钥不支持Windows操作系统
+UnsupportedOperation.MinCountUnsupportedChargeType	此计费方式不支持部分发货MinCount参数
+UnsupportedOperation.MinCountUnsupportedRegion	此区域暂不支持部分发货MinCount参数
+UnsupportedOperation.NoInstanceTypeSupportSpot	该实例类型不支持竞价计费
+UnsupportedOperation.NotSupportImportInstancesActionTimer	针对当前实例设置定时任务失败。
+UnsupportedOperation.OnlyForPrepaidAccount	该操作仅支持预付费账户
+UnsupportedOperation.PeriodicContractNotSupportManualRenew	该机型为周期合约机型不支持手动续费模式
+UnsupportedOperation.RawLocalDiskInsReinstalltoQcow2	当前镜像不支持对该实例的重装操作。
+UnsupportedOperation.SpotUnsupportedRegion	该地域不支持竞价实例。
+UnsupportedOperation.UnderwritingInstanceTypeOnlySupportAutoRenew	该机型为包销机型，RenewFlag的值只允许设置为NOTIFY_AND_AUTO_RENEW。
+UnsupportedOperation.UnsupportedInternationalUser	请求不支持国际版账号
+VpcAddrNotInSubNet	私有网络ip不在子网内。
+VpcIpIsUsed	私有网络ip已经被使用。

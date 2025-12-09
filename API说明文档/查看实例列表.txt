@@ -1,0 +1,600 @@
+查看实例列表
+最近更新时间：2025-11-18 01:18:17
+
+我的收藏
+本页目录：
+1. 接口描述
+2. 输入参数
+3. 输出参数
+4. 示例
+示例1 查看实例列表
+示例2 查询绑定了标签的实例
+示例3 查询实例的最新操作情况
+5. 开发者资源
+腾讯云 API 平台
+API Inspector
+SDK
+命令行工具
+6. 错误码
+1. 接口描述
+接口请求域名： cvm.tencentcloudapi.com 。
+
+本接口 (DescribeInstances) 用于查询一个或多个实例的详细信息。
+
+可以根据实例ID、实例名称或者实例计费模式等信息来查询实例的详细信息。过滤信息详细请见过滤器Filter。
+如果参数为空，返回当前用户一定数量（Limit所指定的数量，默认为20）的实例。
+支持查询实例的最新操作（LatestOperation）以及最新操作状态(LatestOperationState)。
+默认接口请求频率限制：40次/秒。
+
+推荐使用 API Explorer
+点击调试
+API Explorer 提供了在线调用、签名验证、SDK 代码生成和快速检索接口等能力。您可查看每次调用的请求内容和返回结果以及自动生成 SDK 调用示例。
+2. 输入参数
+以下请求参数列表仅列出了接口请求参数和部分公共参数，完整公共参数列表见 公共请求参数。
+
+参数名称	必选	类型	描述
+Action	是	String	公共参数，本接口取值：DescribeInstances。
+Version	是	String	公共参数，本接口取值：2017-03-12。
+Region	是	String	公共参数，详见产品支持的 地域列表。
+InstanceIds.N	否	Array of String	按照一个或者多个实例ID查询。实例ID例如：ins-xxxxxxxx。（此参数的具体格式可参考API简介的ids.N一节）。每次请求的实例的上限为100。参数不支持同时指定InstanceIds和Filters。
+示例值：["ins-rf6ogz49"]
+Filters.N	否	Array of Filter	
+zone
+按照【可用区】进行过滤。可用区例如：ap-guangzhou-6。
+
+类型：String
+
+必选：否
+
+可选项：可用区列表
+
+project-id
+按照【项目ID】进行过滤，可通过调用DescribeProjects查询已创建的项目列表或登录控制台进行查看；也可以调用AddProject创建新的项目。项目ID例如：1002189。
+
+类型：Integer
+
+必选：否
+
+host-id
+按照【CDH ID】进行过滤。CDH ID例如：host-xxxxxxxx。
+
+类型：String
+
+必选：否
+
+dedicated-cluster-id
+按照【CDC ID】进行过滤。CDC ID例如：cluster-xxxxxxx。
+
+类型：String
+
+必选：否
+
+vpc-id
+按照【VPC ID】进行过滤。VPC ID例如：vpc-xxxxxxxx。
+
+类型：String
+
+必选：否
+
+subnet-id
+按照【子网ID】进行过滤。子网ID例如：subnet-xxxxxxxx。
+
+类型：String
+
+必选：否
+
+instance-id
+按照【实例ID】进行过滤。实例ID例如：ins-xxxxxxxx。
+
+类型：String
+
+必选：否
+
+uuid
+按照【实例UUID】进行过滤。实例UUID例如：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx。
+
+类型：String
+
+必选：否
+
+security-group-id
+按照【安全组ID】进行过滤。安全组ID例如: sg-8jlk3f3r。
+
+类型：String
+
+必选：否
+
+instance-name
+按照【实例名称】进行过滤。
+
+类型：String
+
+必选：否
+
+instance-charge-type
+按照【实例计费模式】进行过滤。(PREPAID：表示预付费，即包年包月 | POSTPAID_BY_HOUR：表示后付费，即按量计费 | CDHPAID：表示CDH付费，即只对CDH计费，不对CDH上的实例计费。)
+
+类型：String
+
+必选：否
+
+instance-state
+按照【实例状态】进行过滤。状态类型详见实例状态表
+
+类型：String
+
+必选：否
+
+private-ip-address
+按照【实例主网卡的内网IP】进行过滤。
+
+类型：String
+
+必选：否
+
+public-ip-address
+按照【实例主网卡的公网IP】进行过滤，包含实例创建时自动分配的IP和实例创建后手动绑定的弹性IP。
+
+类型：String
+
+必选：否
+
+ipv6-address
+按照【实例的IPv6地址】进行过滤。
+
+类型：String
+
+必选：否
+
+tag-key
+按照【标签键】进行过滤。
+
+类型：String
+
+必选：否
+
+tag-value
+按照【标签值】进行过滤。
+
+类型：String
+
+必选：否
+
+tag:tag-key
+按照【标签键值对】进行过滤。tag-key使用具体的标签键进行替换。使用请参考示例2。
+
+类型：String
+
+必选：否
+
+creation-start-time
+按照【创建实例请求的起始时间】进行过滤。例如：2023-06-01 00:00:00。
+
+类型：String
+
+必选：否
+
+
+creation-end-time
+按照【创建实例请求的截止时间】进行过滤。例如：2023-06-01 00:00:00。
+
+类型：String
+
+必选：否
+
+每次请求的Filters的上限为10，Filter.Values的上限为5。参数不支持同时指定InstanceIds和Filters。
+Offset	否	Integer	偏移量，默认为0。关于Offset的更进一步介绍请参考 API 简介中的相关小节。
+示例值：1
+Limit	否	Integer	返回数量，默认为20，最大值为100。关于Limit的更进一步介绍请参考 API 简介中的相关小节。
+示例值：5
+3. 输出参数
+参数名称	类型	描述
+TotalCount	Integer	符合条件的实例数量。
+示例值：1
+InstanceSet	Array of Instance	实例详细信息列表。
+RequestId	String	唯一请求 ID，由服务端生成，每次请求都会返回（若请求因其他原因未能抵达服务端，则该次请求不会获得 RequestId）。定位问题时需要提供该次请求的 RequestId。
+4. 示例
+示例1 查看实例列表
+查看在广州三区或广州四区的实例信息，限制返回结果最多为一项
+
+输入示例
+POST / HTTP/1.1
+Host: cvm.tencentcloudapi.com
+Content-Type: application/json
+X-TC-Action: DescribeInstances
+<公共请求参数>
+
+{
+    "Limit": 1,
+    "Filters": [
+        {
+            "Values": [
+                "ap-guangzhou-3",
+                "ap-guangzhou-4"
+            ],
+            "Name": "zone"
+        }
+    ],
+    "Offset": 0
+}
+输出示例
+{
+    "Response": {
+        "InstanceSet": [
+            {
+                "RenewFlag": "NOTIFY_AND_MANUAL_RENEW",
+                "Uuid": "e85f1388-0422-410d-8e50-bef540e78c18",
+                "InstanceState": "RUNNING",
+                "DisableApiTermination": false,
+                "LatestOperationErrorMsg": "",
+                "DefaultLoginPort": 22,
+                "LicenseType": "TencentCloud",
+                "DefaultLoginUser": "root",
+                "LatestOperationState": "SUCCESS",
+                "LoginSettings": {
+                    "KeyIds": [
+                        "skey-b4vakk62"
+                    ]
+                },
+                "IPv6Addresses": [
+                    "2001:0db8:86a3:08d3:1319:8a2e:0370:7344"
+                ],
+                "DedicatedClusterId": "",
+                "RestrictState": "PROTECTIVELY_ISOLATED",
+                "ExpiredTime": "2020-09-22T00:00:00+00:00",
+                "DisasterRecoverGroupId": "",
+                "Memory": 1,
+                "CreatedTime": "2020-09-22T00:00:00+00:00",
+                "CPU": 1,
+                "RdmaIpAddresses": [],
+                "CamRoleName": "",
+                "PublicIpAddresses": [
+                    "123.207.11.190"
+                ],
+                "Tags": [
+                    {
+                        "Key": "myKey",
+                        "Value": "myValue"
+                    }
+                ],
+                "InstanceId": "ins-xlsyru2j",
+                "ImageId": "img-8toqc6s3",
+                "StopChargingMode": "NOT_APPLICABLE",
+                "InstanceChargeType": "POSTPAID_BY_HOUR",
+                "InstanceType": "S2.SMALL2",
+                "SystemDisk": {
+                    "DiskSize": 50,
+                    "CdcId": "cdc-xxxxxxxx",
+                    "DiskId": "disk-czsodtl1",
+                    "DiskType": "CLOUD_SSD"
+                },
+                "Placement": {
+                    "HostId": "host-h3m57oik",
+                    "ProjectId": 1174660,
+                    "HostIds": [],
+                    "Zone": "ap-guangzhou-3"
+                },
+                "PrivateIpAddresses": [
+                    "172.16.32.78"
+                ],
+                "OsName": "CentOS 7.4 64bit",
+                "SecurityGroupIds": [
+                    "sg-p1ezv4wz"
+                ],
+                "InstanceName": "myInstance",
+                "DataDisks": [
+                    {
+                        "DeleteWithInstance": true,
+                        "Encrypt": true,
+                        "CdcId": "cdc-xxxxxxxx",
+                        "DiskType": "CLOUD_SSD",
+                        "ThroughputPerformance": 0,
+                        "KmsKeyId": null,
+                        "DiskSize": 50,
+                        "DiskId": "disk-bzsodtn1"
+                    }
+                ],
+                "IsolatedSource": "NOTISOLATED",
+                "VirtualPrivateCloud": {
+                    "SubnetId": "subnet-mv4sn55k",
+                    "AsVpcGateway": false,
+                    "Ipv6AddressCount": 1,
+                    "VpcId": "vpc-m0cnatxj",
+                    "PrivateIpAddresses": [
+                        "172.16.3.59"
+                    ]
+                },
+                "LatestOperationRequestId": "c7de1287-061d-4ace-8caf-6ad8e5a2f29a",
+                "InternetAccessible": {
+                    "PublicIpAssigned": true,
+                    "InternetChargeType": "TRAFFIC_POSTPAID_BY_HOUR",
+                    "InternetMaxBandwidthOut": 1
+                },
+                "HpcClusterId": "",
+                "LatestOperation": "ResetInstancesType"
+            }
+        ],
+        "TotalCount": 1,
+        "RequestId": "d655191e-a39d-43d2-8349-8c3f2bf4b327"
+    }
+}
+示例2 查询绑定了标签的实例
+查询绑定了标签键值对（city:shenzhen）的实例。
+
+输入示例
+POST / HTTP/1.1
+Host: cvm.tencentcloudapi.com
+Content-Type: application/json
+X-TC-Action: DescribeInstances
+<公共请求参数>
+
+{
+    "Limit": 1,
+    "Filters": [
+        {
+            "Values": [
+                "shenzhen"
+            ],
+            "Name": "tag:city"
+        }
+    ],
+    "Offset": 0
+}
+输出示例
+{
+    "Response": {
+        "InstanceSet": [
+            {
+                "RenewFlag": "NOTIFY_AND_MANUAL_RENEW",
+                "Uuid": "68b510db-b4c1-4630-a62b-73d0c7c970f9",
+                "InstanceState": "RUNNING",
+                "DisableApiTermination": false,
+                "LatestOperationErrorMsg": "",
+                "DefaultLoginPort": 22,
+                "LicenseType": "TencentCloud",
+                "DefaultLoginUser": "root",
+                "LatestOperationState": "SUCCESS",
+                "OsName": "CentOS 7.6 64bit",
+                "CreatedTime": "2020-03-10T02:43:51Z",
+                "RestrictState": "NORMAL",
+                "ExpiredTime": "2020-04-10T02:47:36Z",
+                "DisasterRecoverGroupId": "",
+                "Memory": 1,
+                "IPv6Addresses": null,
+                "CPU": 1,
+                "CamRoleName": "",
+                "PublicIpAddresses": [
+                    "123.207.11.190"
+                ],
+                "Tags": [
+                    {
+                        "Value": "shenzhen",
+                        "Key": "city"
+                    }
+                ],
+                "InstanceId": "ins-9bxebleo",
+                "ImageId": "img-9qabwvbn",
+                "StopChargingMode": "NOT_APPLICABLE",
+                "InstanceChargeType": "PREPAID",
+                "InstanceType": "S1.SMALL1",
+                "SystemDisk": {
+                    "DiskSize": 50,
+                    "DiskId": "disk-nucurerk",
+                    "DiskType": "CLOUD_PREMIUM"
+                },
+                "IsolatedSource": "NOTISOLATED",
+                "Placement": {
+                    "ProjectId": 1174660,
+                    "Zone": "ap-guangzhou-3"
+                },
+                "PrivateIpAddresses": [
+                    "172.16.32.78"
+                ],
+                "LoginSettings": {
+                    "KeyIds": null
+                },
+                "SecurityGroupIds": [
+                    "sg-p1ezv4wz"
+                ],
+                "DedicatedClusterId": "",
+                "InstanceName": "测试实例",
+                "DataDisks": [],
+                "VirtualPrivateCloud": {
+                    "Ipv6AddressCount": 1,
+                    "PrivateIpAddresses": [
+                        "172.16.3.59"
+                    ],
+                    "SubnetId": "subnet-a2676p0e",
+                    "AsVpcGateway": false,
+                    "VpcId": "vpc-g7wzcv7n"
+                },
+                "LatestOperationRequestId": "3554eb5b-1cfa-471a-ae76-dc436c9d43e8",
+                "InternetAccessible": {
+                    "InternetMaxBandwidthOut": 1,
+                    "InternetChargeType": "BANDWIDTH_PREPAID"
+                },
+                "RdmaIpAddresses": [],
+                "HpcClusterId": "",
+                "LatestOperation": "RenewInstances"
+            }
+        ],
+        "TotalCount": 1,
+        "RequestId": "62DDFFC6-FDB5-44F7-20A6-59152E3D129A"
+    }
+}
+示例3 查询实例的最新操作情况
+当对实例发起 StopInstances 后，通过 DescribeInstances 可以查询到实例的 LatestOperation 为 StopInstances，LatestOperationState 为 OPERATING。
+
+输入示例
+POST / HTTP/1.1
+Host: cvm.tencentcloudapi.com
+Content-Type: application/json
+X-TC-Action: DescribeInstances
+<公共请求参数>
+
+{
+    "Limit": 1,
+    "Filters": [
+        {
+            "Values": [
+                "ap-guangzhou-3",
+                "ap-guangzhou-4"
+            ],
+            "Name": "zone"
+        }
+    ],
+    "Offset": 0
+}
+输出示例
+{
+    "Response": {
+        "InstanceSet": [
+            {
+                "RenewFlag": "NOTIFY_AND_MANUAL_RENEW",
+                "Uuid": "e85f1388-0422-410d-8e50-bef540e78c18",
+                "InstanceState": "RUNNING",
+                "DisableApiTermination": false,
+                "LatestOperationErrorMsg": "",
+                "DefaultLoginPort": 22,
+                "LicenseType": "TencentCloud",
+                "DefaultLoginUser": "root",
+                "LatestOperationState": "OPERATING",
+                "LoginSettings": {
+                    "KeyIds": [
+                        "skey-b4vakk62"
+                    ]
+                },
+                "IPv6Addresses": [
+                    "2001:0db8:86a3:08d3:1319:8a2e:0370:7344"
+                ],
+                "RestrictState": "PROTECTIVELY_ISOLATED",
+                "ExpiredTime": "2020-09-22T00:00:00+00:00",
+                "DisasterRecoverGroupId": "ps-xxxxxxxx",
+                "Memory": 1,
+                "CreatedTime": "2020-09-22T00:00:00+00:00",
+                "CPU": 1,
+                "RdmaIpAddresses": [],
+                "CamRoleName": "",
+                "DedicatedClusterId": "",
+                "PublicIpAddresses": [
+                    "123.207.11.190"
+                ],
+                "Tags": [
+                    {
+                        "Key": "myKey",
+                        "Value": "myValue"
+                    }
+                ],
+                "InstanceId": "ins-xlsyru2j",
+                "ImageId": "img-8toqc6s3",
+                "StopChargingMode": "NOT_APPLICABLE",
+                "InstanceChargeType": "POSTPAID_BY_HOUR",
+                "InstanceType": "S2.SMALL2",
+                "SystemDisk": {
+                    "DiskSize": 50,
+                    "CdcId": "cdc-xxxxxxxx",
+                    "DiskId": "disk-czsodtl1",
+                    "DiskType": "CLOUD_SSD"
+                },
+                "Placement": {
+                    "HostId": "host-h3m57oik",
+                    "ProjectId": 1174660,
+                    "HostIds": [],
+                    "Zone": "ap-guangzhou-3"
+                },
+                "PrivateIpAddresses": [
+                    "172.16.32.78"
+                ],
+                "OsName": "CentOS 7.4 64bit",
+                "SecurityGroupIds": [
+                    "sg-p1ezv4wz"
+                ],
+                "InstanceName": "myInstance",
+                "DataDisks": [
+                    {
+                        "DeleteWithInstance": true,
+                        "Encrypt": true,
+                        "CdcId": "cdc-xxxxxxxx",
+                        "DiskType": "CLOUD_SSD",
+                        "ThroughputPerformance": 0,
+                        "KmsKeyId": null,
+                        "DiskSize": 50,
+                        "DiskId": "disk-bzsodtn1"
+                    }
+                ],
+                "IsolatedSource": "NOTISOLATED",
+                "VirtualPrivateCloud": {
+                    "SubnetId": "subnet-mv4sn55k",
+                    "AsVpcGateway": false,
+                    "Ipv6AddressCount": 1,
+                    "VpcId": "vpc-m0cnatxj",
+                    "PrivateIpAddresses": [
+                        "172.16.3.59"
+                    ]
+                },
+                "LatestOperationRequestId": "c7de1287-061d-4ace-8caf-6ad8e5a2f29a",
+                "InternetAccessible": {
+                    "PublicIpAssigned": true,
+                    "InternetChargeType": "TRAFFIC_POSTPAID_BY_HOUR",
+                    "InternetMaxBandwidthOut": 1
+                },
+                "HpcClusterId": "",
+                "LatestOperation": "StopInstances"
+            }
+        ],
+        "TotalCount": 1,
+        "RequestId": "d655191e-a39d-43d2-8349-8c3f2bf4b327"
+    }
+}
+5. 开发者资源
+腾讯云 API 平台
+腾讯云 API 平台 是综合 API 文档、错误码、API Explorer 及 SDK 等资源的统一查询平台，方便您从同一入口查询及使用腾讯云提供的所有 API 服务。
+
+API Inspector
+用户可通过 API Inspector 查看控制台每一步操作关联的 API 调用情况，并自动生成各语言版本的 API 代码，也可前往 API Explorer 进行在线调试。
+
+SDK
+云 API 3.0 提供了配套的开发工具集（SDK），支持多种编程语言，能更方便的调用 API。
+
+Tencent Cloud SDK 3.0 for Python: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for Java: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for PHP: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for Go: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for Node.js: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for .NET: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for C++: CNB, GitHub, Gitee
+Tencent Cloud SDK 3.0 for Ruby: CNB, GitHub, Gitee
+命令行工具
+Tencent Cloud CLI 3.0
+6. 错误码
+以下仅列出了接口业务逻辑相关的错误码，其他错误码详见 公共错误码。
+
+错误码	描述
+FailedOperation.IllegalTagKey	标签键存在不合法字符
+FailedOperation.IllegalTagValue	标签值存在不合法字符。
+FailedOperation.TagKeyReserved	请求中指定的标签键为系统预留标签，禁止创建
+InternalServerError	操作内部错误。
+InvalidFilter	无效的过滤器。
+InvalidFilterValue.LimitExceeded	Filter传值超出限制。
+InvalidHostId.Malformed	无效CDH ID。指定的CDH ID格式错误。例如ID长度错误host-1122。
+InvalidInstanceId.Malformed	无效实例ID。指定的实例ID格式错误。例如实例ID长度错误ins-1122。
+InvalidParameter	参数错误。
+InvalidParameterValue	参数取值错误。
+InvalidParameterValue.IPAddressMalformed	IP格式非法。
+InvalidParameterValue.IPv6AddressMalformed	ipv6地址无效
+InvalidParameterValue.InstanceIdMalformed	实例ID不合要求，请提供规范的实例ID，类似ins-xxxxxxxx，字母x代表小写字符或数字。
+InvalidParameterValue.InvalidAppIdFormat	无效的appid。
+InvalidParameterValue.InvalidIpFormat	IP地址不符合规范
+InvalidParameterValue.InvalidTimeFormat	时间格式不合法。
+InvalidParameterValue.InvalidVagueName	无效的模糊查询字符串。
+InvalidParameterValue.LimitExceeded	参数值数量超过限制。
+InvalidParameterValue.SubnetIdMalformed	子网ID不合要求，请提供规范的子网ID，类似subnet-xxxxxxxx，字母x代表小写字符或者数字
+InvalidParameterValue.TagKeyNotFound	指定的标签不存在。
+InvalidParameterValue.UuidMalformed	uuid不合要求。
+InvalidParameterValue.VpcIdMalformed	VPC IDxxx不合要求，请提供规范的Vpc ID， 类似vpc-xxxxxxxx，字母x代表小写字符或者数字。
+InvalidSecurityGroupId.NotFound	指定的安全组ID不存在。
+InvalidSgId.Malformed	指定的安全组ID格式错误，例如实例ID长度错误sg-ide32。
+InvalidZone.MismatchRegion	指定的zone不存在。
+ResourceNotFound.HpcCluster	高性能计算集群不存在。
+UnauthorizedOperation.InvalidToken	请确认Token是否有效。
+UnsupportedOperation	操作不支持。

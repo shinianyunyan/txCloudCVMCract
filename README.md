@@ -82,8 +82,6 @@ export TENCENT_SECRET_KEY="your-secret-key"
 
 ```bash
 python main.py
-# 或
-python app.py
 ```
 
 启动后，在图形界面中：
@@ -207,16 +205,24 @@ instance = manager.create_instance(
 txCloudCVMCract/
 ├── README.md              # 项目说明文档
 ├── requirements.txt       # 依赖包列表
-├── config.py             # 配置文件
 ├── main.py               # 主程序入口（启动UI）
-├── app.py                # UI应用主文件
-├── cvm_manager.py        # CVM 管理核心类
-├── utils.py              # 工具函数
-├── ui/                   # UI界面相关文件
+├── config/                # 配置相关文件
+│   ├── config.py         # 配置文件
+│   └── config_manager.py # 配置管理器
+├── core/                  # 核心功能
+│   └── cvm_manager.py    # CVM 管理核心类
+├── utils/                 # 工具函数
+│   └── utils.py
+├── ui/                    # UI界面相关文件
+│   ├── app.py            # UI应用主文件
 │   ├── main_window.py    # 主窗口
-│   ├── create_dialog.py  # 创建实例对话框
-│   ├── instance_list.py  # 实例列表组件
-│   └── settings_dialog.py # 设置对话框
+│   ├── dialogs/          # 对话框
+│   │   ├── create_dialog.py  # 创建实例对话框
+│   │   ├── instance_config_dialog.py  # 实例配置对话框
+│   │   └── settings_dialog.py # 设置对话框
+│   └── components/       # UI组件
+│       ├── instance_list.py  # 实例列表组件
+│       └── message_bar.py    # 消息提示条
 └── examples/             # 使用示例
     ├── create_instance.py
     ├── batch_operations.py
