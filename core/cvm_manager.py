@@ -112,10 +112,16 @@ class CVMManager:
         except Exception as e:
             raise
     
-    def get_images(self, image_type):
-        """获取镜像列表"""
+    def get_images(self, image_type, limit=100):
+        """获取镜像列表
+        
+        Args:
+            image_type: 镜像类型（PUBLIC_IMAGE / PRIVATE_IMAGE / SHARED_IMAGE / MARKET_IMAGE）
+            limit: 返回数量上限，默认100
+        """
         try:
             req = models.DescribeImagesRequest()
+            req.Limit = limit
             f = models.Filter()
             f.Name = "image-type"
             f.Values = [image_type]
@@ -188,7 +194,13 @@ class CVMManager:
                     price_info["bandwidth_price"] = str(resp.BandwidthPrice.UnitPrice)
                     price_info["bandwidth_unit"] = resp.BandwidthPrice.ChargeUnit
             
-            self.logger.info(f"查询价格成功: {price_info}")
+            cvm_price = price_info.get("cvm_price", "0")
+            cvm_unit = price_info.get("cvm_unit", "HOUR")
+            bandwidth_price = price_info.get("bandwidth_price", "0")
+            bandwidth_unit = price_info.get("bandwidth_unit", "GB")
+            self.logger.info(
+                f"查询价格成功: 计算实例 {cvm_price}/{cvm_unit}，带宽 {bandwidth_price}/{bandwidth_unit}"
+            )
             return price_info
         except Exception as e:
             raise

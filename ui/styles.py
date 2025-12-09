@@ -12,6 +12,7 @@ UI 样式定义模块
     - 所有CSS大括号需要转义为 {{ 和 }}（因为使用.format()方法）
     - 变量通过 .format() 方法注入
 """
+import os
 from PyQt5.QtWidgets import QApplication
 
 
@@ -52,6 +53,9 @@ def get_style_sheet():
         str: 完整的QSS样式表字符串
     """
     scale = get_dpi_scale()
+    assets_dir = os.path.join(os.path.dirname(__file__), "assets")
+    arrow_icon_down = os.path.abspath(os.path.join(assets_dir, "向下.svg")).replace("\\", "/")
+    arrow_icon_up = os.path.abspath(os.path.join(assets_dir, "向上.svg")).replace("\\", "/")
     
     # 基础字体大小
     base_font_size = 13
@@ -226,18 +230,15 @@ QComboBox::drop-down {{
 }}
 
 QComboBox::down-arrow {{
-    image: none;
-    width: 0;
-    height: 0;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 6px solid #1890ff;
+    image: url("{arrow_icon_down}");
+    width: 12px;
+    height: 12px;
     margin-right: 6px;
     margin-top: 2px;
 }}
 
-QComboBox::down-arrow:hover {{
-    border-top-color: #40a9ff;
+QComboBox::down-arrow:on {{
+    image: url("{arrow_icon_up}");
 }}
 
 QComboBox QAbstractItemView {{
@@ -410,7 +411,9 @@ QToolTip {{
         large_font_size=large_font_size,
         small_padding=small_padding,
         large_padding=large_padding,
-        min_height=min_height
+        min_height=min_height,
+        arrow_icon_down=arrow_icon_down,
+        arrow_icon_up=arrow_icon_up
     )
     return style
 

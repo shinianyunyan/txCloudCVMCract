@@ -2,6 +2,9 @@
 实例配置对话框
 用于配置创建实例时的默认参数
 """
+import json
+import os
+import tempfile
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton, QSpinBox, QComboBox, QLineEdit, QLabel, QMessageBox, QDialogButtonBox
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QIntValidator
@@ -24,7 +27,7 @@ class ConfigLoadThread(QThread):
     def __init__(self, cvm_manager):
         super().__init__()
         self.cvm_manager = cvm_manager
-    
+
     def run(self):
         """在后台线程中加载数据"""
         try:
@@ -41,7 +44,9 @@ class ConfigLoadThread(QThread):
                         if default_region != self.cvm_manager.region:
                             self.cvm_manager._init_client(default_region)
                     regions = self.cvm_manager.get_regions()
-                    images = self.cvm_manager.get_images("PUBLIC_IMAGE")
+                    # 拉取公共镜像全集，后续在前端按平台分类
+                    # 腾讯云接口限制 Limit 1-100，防止报 InvalidParameterValue
+                    images = self.cvm_manager.get_images("PUBLIC_IMAGE", limit=100)
                 except Exception as e:
                     self.error_occurred.emit(str(e))
                     return
@@ -60,6 +65,11 @@ class InstanceConfigDialog(QDialog):
         self.config_data = None
         self.regions_data = []
         self.images_data = []
+        self.platform_images = {}
+        self.all_images = []
+        # 默认优先展示 Debian 镜像
+        self.current_platform = "DEBIAN"
+        self.temp_image_file = None
         self.init_ui()
         self.start_load_config()
     
@@ -117,6 +127,11 @@ class InstanceConfigDialog(QDialog):
         self.zone_combo.currentTextChanged.connect(self.update_price)
         form_layout.addRow("可用区:", self.zone_combo)
         
+        # 镜像平台分类（从公共镜像中按 Platform 归类）
+        self.image_platform_combo = QComboBox()
+        self.image_platform_combo.currentIndexChanged.connect(self.on_platform_changed)
+        form_layout.addRow("镜像类型:", self.image_platform_combo)
+        
         # 镜像选择
         self.image_combo = QComboBox()
         self.image_combo.currentTextChanged.connect(self.update_price)
@@ -172,6 +187,9 @@ class InstanceConfigDialog(QDialog):
         self.config_data = config
         self.regions_data = regions
         self.images_data = images
+        self.all_images = images or []
+        self.platform_images = self._categorize_images(self.all_images)
+        self._save_temp_images()
         self.load_config()
     
     def on_load_error(self, error_msg):
@@ -206,15 +224,158 @@ class InstanceConfigDialog(QDialog):
                         region['Region']
                     )
         
-        if self.images_data:
-            self.image_combo.addItem("(自动选择)", None)
-            for image in self.images_data[:20]:
-                self.image_combo.addItem(
-                    f"{image['ImageName']} ({image['ImageId']})",
-                    image['ImageId']
-                )
+        # 镜像类型下拉（按平台分类）
+        self.populate_platform_combo()
+        # 镜像初始数据（默认按当前平台展示）
+        default_images = self.platform_images.get(self.current_platform, self.all_images)
+        self.populate_image_combo(default_images)
         
         # 设置已保存的配置
+        if config.get("default_region"):
+            index = self.region_combo.findData(config["default_region"])
+            if index >= 0:
+                self.region_combo.setCurrentIndex(index)
+                self.on_region_changed()
+        
+        if config.get("default_image_id"):
+            index = self.image_combo.findData(config["default_image_id"])
+            if index >= 0:
+                self.image_combo.setCurrentIndex(index)
+        
+        if config.get("default_zone"):
+            index = self.zone_combo.findData(config["default_zone"])
+            if index >= 0:
+                self.zone_combo.setCurrentIndex(index)
+        
+        self.update_price()
+    
+    def populate_platform_combo(self):
+        """根据平台分类刷新镜像类型下拉"""
+        self.image_platform_combo.clear()
+        platform_labels = {
+            "WINDOWS": "Windows",
+            "UBUNTU": "Ubuntu",
+            "CENTOS": "CentOS",
+            "DEBIAN": "Debian",
+            "REDHAT": "Redhat",
+            "SUSE": "Suse",
+            "OPENOS": "Openos",
+            "OTHER": "Other"
+        }
+        if self.platform_images:
+            # 将 Other 固定放在最后，其他按原顺序
+            platform_keys = list(self.platform_images.keys())
+            # Debian 优先显示
+            has_debian = "DEBIAN" in platform_keys
+            if has_debian:
+                platform_keys = ["DEBIAN"] + [k for k in platform_keys if k != "DEBIAN"]
+            if "OTHER" in platform_keys:
+                platform_keys = [k for k in platform_keys if k != "OTHER"] + ["OTHER"]
+            for platform_key in platform_keys:
+                images = self.platform_images[platform_key]
+                label = f"{platform_labels.get(platform_key, platform_key.title())} ({len(images)})"
+                self.image_platform_combo.addItem(label, platform_key)
+        # 默认切换到 Debian（若存在），否则保持当前
+        default_index = self.image_platform_combo.findData(self.current_platform)
+        if default_index >= 0:
+            self.image_platform_combo.setCurrentIndex(default_index)
+        else:
+            # 如果默认平台不存在，则退回全部镜像
+            self.current_platform = next(iter(self.platform_images.keys()), "OTHER")
+            self.image_platform_combo.setCurrentIndex(0)
+        self.on_platform_changed()
+    
+    def populate_image_combo(self, images):
+        """根据镜像列表刷新镜像下拉"""
+        self.image_combo.clear()
+        self.image_combo.addItem("(自动选择)", None)
+        if images:
+            for image in images:
+                name = image.get("ImageName", "")
+                platform = image.get("Platform", "")
+                self.image_combo.addItem(
+                    f"{name} [{platform}] ({image['ImageId']})",
+                    image["ImageId"]
+                )
+        self.update_price()
+    
+    def on_platform_changed(self):
+        """镜像类型（平台）切换时筛选已拉取的镜像"""
+        platform_key = self.image_platform_combo.currentData()
+        self.current_platform = platform_key
+        if platform_key == "ALL":
+            self.populate_image_combo(self.all_images)
+        else:
+            self.populate_image_combo(self.platform_images.get(platform_key, []))
+
+    def _categorize_images(self, images):
+        """按平台归类镜像"""
+        buckets = {}
+        for img in images or []:
+            platform = (img.get("Platform") or "OTHER").upper()
+            if platform.startswith("WINDOWS"):
+                key = "WINDOWS"
+            elif platform.startswith("UBUNTU"):
+                key = "UBUNTU"
+            elif platform.startswith("CENTOS"):
+                key = "CENTOS"
+            elif platform.startswith("DEBIAN"):
+                key = "DEBIAN"
+            elif platform.startswith("REDHAT"):
+                key = "REDHAT"
+            elif platform.startswith("SUSE"):
+                key = "SUSE"
+            elif platform.startswith("OPEN"):
+                key = "OPENOS"
+            else:
+                key = "OTHER"
+            buckets.setdefault(key, []).append(img)
+        return buckets
+
+    def _save_temp_images(self):
+        """将拉取的镜像缓存到临时文件，方便后续筛选"""
+        try:
+            data = {
+                "all_images": self.all_images,
+                "platform_images_keys": list(self.platform_images.keys())
+            }
+            temp_path = os.path.join(tempfile.gettempdir(), "cvm_images_cache.json")
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            self.temp_image_file = temp_path
+        except Exception:
+            # 缓存失败不影响主流程
+            self.temp_image_file = None
+
+    def _cleanup_temp_images(self):
+        """删除临时镜像缓存文件"""
+        if self.temp_image_file and os.path.exists(self.temp_image_file):
+            try:
+                os.remove(self.temp_image_file)
+            except Exception:
+                pass
+
+    def accept(self):
+        """保存配置"""
+        try:
+            super().accept()
+        finally:
+            self._cleanup_temp_images()
+
+    def reject(self):
+        """取消配置"""
+        try:
+            super().reject()
+        finally:
+            self._cleanup_temp_images()
+
+    def closeEvent(self, event):
+        """窗口关闭时清理缓存文件"""
+        self._cleanup_temp_images()
+        super().closeEvent(event)
+        
+        # 设置已保存的配置
+        config = self.config_data or get_instance_config()
         if config.get("default_region"):
             index = self.region_combo.findData(config["default_region"])
             if index >= 0:

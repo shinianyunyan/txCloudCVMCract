@@ -257,14 +257,15 @@ class MainWindow(QWidget):
         from utils.utils import setup_logger
         logger = setup_logger()
         
+        log_message = " ".join(message.splitlines())
         if message_type == "error":
-            logger.error(f"UI消息: {message}")
+            logger.error(f"UI消息: {log_message}")
         elif message_type == "warning":
-            logger.warning(f"UI消息: {message}")
+            logger.warning(f"UI消息: {log_message}")
         elif message_type == "success":
-            logger.info(f"UI消息: {message}")
+            logger.info(f"UI消息: {log_message}")
         else:
-            logger.info(f"UI消息: {message}")
+            logger.info(f"UI消息: {log_message}")
         
         if self.message_bar:
             self.message_bar.show_message(message, message_type, duration)
