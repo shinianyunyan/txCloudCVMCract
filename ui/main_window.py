@@ -28,7 +28,7 @@ except ImportError:
 class MainWindow(QWidget):
     """
     主窗口内容组件。
-
+    
     作为 `CVMApp` 的中央部件，组织工具栏、统计信息和实例表格，
     并承载所有与实例相关的操作入口。
     """
@@ -388,7 +388,20 @@ class MainWindow(QWidget):
                 if not image_id:
                     self.show_message("未在实例配置中设置公共镜像，请先配置", "warning", 3000)
                     return
-            result = self.cvm_manager.create(config.get("default_cpu", 2), config.get("default_memory", 4), config["default_region"], config["default_password"], image_id, None, config.get("default_zone"), count)
+            result = self.cvm_manager.create(
+                config.get("default_cpu", 2),
+                config.get("default_memory", 4),
+                config["default_region"],
+                config["default_password"],
+                image_id,
+                None,
+                config.get("default_zone"),
+                count,
+                config.get("default_disk_type", "CLOUD_PREMIUM"),
+                config.get("default_disk_size", 50),
+                config.get("default_bandwidth", 10),
+                config.get("default_bandwidth_charge", "TRAFFIC_POSTPAID_BY_HOUR")
+            )
             
             if count == 1:
                 instance_id = result.get('InstanceId') or (result.get('InstanceIds', [None])[0] if result.get('InstanceIds') else None)
@@ -526,7 +539,18 @@ class MainWindow(QWidget):
                 self.cvm_manager.reset_pwd(selected_ids, password)
                 from config.config_manager import get_instance_config, save_instance_config
                 config = get_instance_config()
-                save_instance_config(config.get("default_cpu", 2), config.get("default_memory", 4), config.get("default_region"), config.get("default_zone"), config.get("default_image_id"), password)
+                save_instance_config(
+                    config.get("default_cpu", 2),
+                    config.get("default_memory", 4),
+                    config.get("default_region"),
+                    config.get("default_zone"),
+                    config.get("default_image_id"),
+                    password,
+                    config.get("default_disk_type", "CLOUD_PREMIUM"),
+                    config.get("default_disk_size", 50),
+                    config.get("default_bandwidth", 10),
+                    config.get("default_bandwidth_charge", "TRAFFIC_POSTPAID_BY_HOUR")
+                )
                 
                 # 更新提示信息
                 if running_count > 0:
@@ -561,10 +585,10 @@ class MainWindow(QWidget):
         main_app = self.parent()
         while main_app and not isinstance(main_app, QMainWindow):
             main_app = main_app.parent()
-
+        
         if main_app and hasattr(main_app, 'start_loading_status'):
             main_app.start_loading_status()
-
+        
         try:
             if not CVM_MANAGER_AVAILABLE:
                 if main_app and hasattr(main_app, 'stop_loading_status'):
@@ -572,7 +596,7 @@ class MainWindow(QWidget):
                 self.show_message("请先安装依赖：pip install -r requirements.txt", "error", 5000)
                 self.btn_instance_config.setEnabled(True)
                 return
-
+            
             if not self.cvm_manager:
                 if not SECRET_ID or not SECRET_KEY:
                     if main_app and hasattr(main_app, 'stop_loading_status'):
@@ -592,9 +616,9 @@ class MainWindow(QWidget):
                     self.show_message(f"无法初始化CVM管理器: {str(e)}", "error", 5000)
                     self.btn_instance_config.setEnabled(True)
                     return
-
+            
             dialog = InstanceConfigDialog(self.cvm_manager, self)
-
+            
             def on_config_loaded():
                 if main_app and hasattr(main_app, 'stop_loading_status'):
                     main_app.stop_loading_status()
@@ -602,14 +626,14 @@ class MainWindow(QWidget):
                 if dialog.result() == QDialog.Accepted:
                     self.show_message("实例配置已保存", "success", 2000)
                 self.btn_instance_config.setEnabled(True)
-
+            
             def on_dialog_finished(result):
                 if main_app and hasattr(main_app, 'stop_loading_status'):
                     main_app.stop_loading_status()
                 self.btn_instance_config.setEnabled(True)
-
+            
             dialog.finished.connect(on_dialog_finished)
-
+            
             if hasattr(dialog, 'load_thread'):
                 dialog.load_thread.finished.connect(on_config_loaded)
             else:

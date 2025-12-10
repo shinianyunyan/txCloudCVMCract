@@ -44,7 +44,7 @@ class Worker(QObject):
 class CVMApp(QMainWindow):
     """
     CVM 管理应用主窗口。
-
+    
     继承 QMainWindow，负责：
         - 初始化主界面和尺寸。
         - 创建菜单栏、状态栏。

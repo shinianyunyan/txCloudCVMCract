@@ -1,14 +1,19 @@
 # 腾讯云 CVM 实例管理工具
 
-基于腾讯云 API 的桌面图形工具，支持批量管理与创建 CVM 实例（公共镜像/自定义镜像）。
+基于腾讯云 APIv3.0 的桌面图形工具，支持批量管理与创建 CVM 实例（公共镜像/自定义镜像）。
 
-## 功能亮点
-- 实例创建：公共镜像（用实例配置中的镜像 ID）或自定义镜像（自动拉取账号下私有镜像列表）；校验登录密码复杂度
+## 主要功能
+- 实例创建：公共镜像（用实例配置中的镜像 ID）或自定义镜像（自动拉取账号下私有镜像列表）
 - 批量操作：开机、关机、销毁、重置密码
 - 密码重置行为：运行中实例会被强制关机，重置完成后自动开机；已关机实例保持关机
 - 实例列表：展示状态/IP/配置，密码支持显示/隐藏与复制
 - 配置管理：界面可保存默认 CPU/内存/区域/公共镜像/密码，启动时自动读取；无公共镜像时创建按钮禁用
 - 日志与提示：界面消息提示，`cvm_manager.log` 记录关键操作
+
+## 主要功能界面
+![mainWindow](./mainWindow.jpg)
+![mainWindow2](./mainwindow2.jpg)
+![setting](./setting.jpg)
 
 ## 环境要求
 - Python 3.8+（推荐 3.10+）
@@ -20,12 +25,11 @@
 pip install -r requirements.txt
 ```
 
-## 配置凭证与默认参数
-- 方式一：编辑 `config/config.py`，填入 `SECRET_ID`、`SECRET_KEY`、`DEFAULT_REGION`
+## 配置API凭证与默认参数
+- 方式一：首次启动会生成/校验配置文件，可在“设置”中添加相关凭据并保存
 - 方式二：使用环境变量
   - Windows PowerShell: `set TENCENT_SECRET_ID=xxx`，`set TENCENT_SECRET_KEY=xxx`
   - Linux/macOS: `export TENCENT_SECRET_ID=xxx`，`export TENCENT_SECRET_KEY=xxx`
-- 首次启动会生成/校验配置文件；默认实例参数（CPU/内存/区域/镜像 ID/密码）可在界面“实例配置”中设置并保存
 
 ## 启动图形界面
 ```bash

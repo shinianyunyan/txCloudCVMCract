@@ -149,7 +149,7 @@ class CVMManager:
         except Exception as e:
             raise
     
-    def get_price(self, cpu, memory, region, image_id, zone, storage_size, bandwidth):
+    def get_price(self, cpu, memory, region, image_id, zone, storage_size, bandwidth, disk_type="CLOUD_PREMIUM", bandwidth_charge="TRAFFIC_POSTPAID_BY_HOUR"):
         """
         查询实例价格（按量计费）。
 
@@ -178,23 +178,21 @@ class CVMManager:
                 self.logger.info(f"使用最接近的配置: {actual_cpu}核{actual_memory}G (请求: {cpu}核{memory}G)")
             
             req = models.InquiryPriceRunInstancesRequest()
+            # 显式设定按小时后付费，避免默认值差异
             req.InstanceChargeType = "POSTPAID_BY_HOUR"
+            req.InstanceCount = 1
             req.InstanceType = instance_type
             req.ImageId = image_id
             req.SystemDisk = models.SystemDisk()
-            req.SystemDisk.DiskSize = 50
-            req.SystemDisk.DiskType = "CLOUD_PREMIUM"
+            req.SystemDisk.DiskSize = storage_size or 50
+            req.SystemDisk.DiskType = disk_type or "CLOUD_PREMIUM"
             req.Placement = models.Placement()
             req.Placement.Zone = zone
             
-            if storage_size > 0:
-                req.DataDisks = [models.DataDisk()]
-                req.DataDisks[0].DiskSize = storage_size
-                req.DataDisks[0].DiskType = "CLOUD_PREMIUM"
-            
             if bandwidth > 0:
                 req.InternetAccessible = models.InternetAccessible()
-                req.InternetAccessible.InternetChargeType = "TRAFFIC_POSTPAID_BY_HOUR"
+                req.InternetAccessible.PublicIpAssigned = True
+                req.InternetAccessible.InternetChargeType = bandwidth_charge or "TRAFFIC_POSTPAID_BY_HOUR"
                 req.InternetAccessible.InternetMaxBandwidthOut = bandwidth
             
             resp = self.client.InquiryPriceRunInstances(req)
@@ -225,7 +223,7 @@ class CVMManager:
         except Exception as e:
             raise
     
-    def create(self, cpu, memory, region, password, image_id, instance_name, zone, count):
+    def create(self, cpu, memory, region, password, image_id, instance_name, zone, count, system_disk_type="CLOUD_PREMIUM", system_disk_size=50, bandwidth=10, bandwidth_charge="TRAFFIC_POSTPAID_BY_HOUR"):
         """
         创建实例（按量计费）。
 
@@ -271,8 +269,8 @@ class CVMManager:
             req.Placement = models.Placement()
             req.Placement.Zone = zone
             req.SystemDisk = models.SystemDisk()
-            req.SystemDisk.DiskType = "CLOUD_PREMIUM"
-            req.SystemDisk.DiskSize = 50
+            req.SystemDisk.DiskType = system_disk_type or "CLOUD_PREMIUM"
+            req.SystemDisk.DiskSize = system_disk_size or 50
             login_settings = models.LoginSettings()
             login_settings.Password = password
             req.LoginSettings = login_settings
@@ -280,8 +278,8 @@ class CVMManager:
             req.InstanceCount = count
             req.InternetAccessible = models.InternetAccessible()
             req.InternetAccessible.PublicIpAssigned = True
-            req.InternetAccessible.InternetChargeType = "TRAFFIC_POSTPAID_BY_HOUR"
-            req.InternetAccessible.InternetMaxBandwidthOut = 10
+            req.InternetAccessible.InternetChargeType = bandwidth_charge or "TRAFFIC_POSTPAID_BY_HOUR"
+            req.InternetAccessible.InternetMaxBandwidthOut = bandwidth or 0
             
             resp = self.client.RunInstances(req)
             
