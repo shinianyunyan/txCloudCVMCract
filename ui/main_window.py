@@ -6,7 +6,7 @@
     - 负责实例创建、启动、关机、销毁、密码重置等交互逻辑。
     - 统一触发顶部消息条，反馈成功或异常信息。
 """
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QLineEdit, QGroupBox, QGridLayout, QFrame, QMainWindow, QSpinBox, QDialog
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QLineEdit, QGroupBox, QGridLayout, QFrame, QMainWindow, QSpinBox, QDialog, QComboBox
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont
 from ui.components.instance_list import InstanceList
@@ -39,6 +39,7 @@ class MainWindow(QWidget):
         self.message_bar = None
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(lambda: self.refresh_instances(silent=True))
+        self.custom_images = []  # 缓存自定义镜像列表
         self.init_ui()
         self.auto_refresh_on_start()
     
@@ -115,6 +116,19 @@ class MainWindow(QWidget):
         self.count_spin.setValue(1)
         self.count_spin.setMaximumWidth(60)
         self.count_spin.setToolTip("创建实例数量")
+
+        # 镜像来源选择（公共/自定义）
+        self.image_source_combo = QComboBox()
+        self.image_source_combo.addItem("公共镜像", "PUBLIC")
+        self.image_source_combo.addItem("自定义镜像", "PRIVATE")
+        self.image_source_combo.currentIndexChanged.connect(self.on_image_source_changed)
+        self.image_source_combo.setToolTip("选择镜像来源")
+
+        # 自定义镜像列表（仅当选择自定义时可用）
+        self.custom_image_combo = QComboBox()
+        self.custom_image_combo.setMinimumWidth(220)
+        self.custom_image_combo.setEnabled(False)
+        self.custom_image_combo.setToolTip("选择自定义镜像")
         
         self.btn_create = QPushButton("➕ 创建实例")
         self.btn_create.setProperty("class", "primary")
@@ -129,6 +143,9 @@ class MainWindow(QWidget):
         btn_group1.addWidget(self.btn_refresh)
         btn_group1.addWidget(QLabel("数量:"))
         btn_group1.addWidget(self.count_spin)
+        btn_group1.addWidget(QLabel("镜像来源:"))
+        btn_group1.addWidget(self.image_source_combo)
+        btn_group1.addWidget(self.custom_image_combo)
         btn_group1.addWidget(self.btn_create)
         btn_group1.addWidget(self.btn_instance_config)
         
@@ -226,6 +243,8 @@ class MainWindow(QWidget):
         main_layout.setStretchFactor(list_group, 1)
         
         self.setLayout(main_layout)
+        # 初始化镜像来源状态
+        self.refresh_image_selection()
     
     def on_search_changed(self, text):
         """搜索文本变化时的处理"""
@@ -302,6 +321,9 @@ class MainWindow(QWidget):
                 if not silent:
                     self.show_message(f"无法初始化CVM管理器: {str(e)}", "error", 5000)
                 return
+            # 刷新自定义镜像列表（在首次成功初始化后）
+            self.load_custom_images()
+            self.refresh_image_selection()
         
         try:
             instances = self.cvm_manager.get_instances(None)
@@ -351,7 +373,22 @@ class MainWindow(QWidget):
             return
         
         try:
-            result = self.cvm_manager.create(config.get("default_cpu", 2), config.get("default_memory", 4), config["default_region"], config["default_password"], config.get("default_image_id"), None, config.get("default_zone"), count)
+            # 根据选择的镜像来源确定镜像ID
+            image_id = config.get("default_image_id")
+            source = self.image_source_combo.currentData()
+            if source == "PRIVATE":
+                if not self.custom_images:
+                    self.show_message("没有可用的自定义镜像", "warning", 3000)
+                    return
+                image_id = self.custom_image_combo.currentData()
+                if not image_id:
+                    self.show_message("请选择自定义镜像", "warning", 3000)
+                    return
+            else:
+                if not image_id:
+                    self.show_message("未在实例配置中设置公共镜像，请先配置", "warning", 3000)
+                    return
+            result = self.cvm_manager.create(config.get("default_cpu", 2), config.get("default_memory", 4), config["default_region"], config["default_password"], image_id, None, config.get("default_zone"), count)
             
             if count == 1:
                 instance_id = result.get('InstanceId') or (result.get('InstanceIds', [None])[0] if result.get('InstanceIds') else None)
@@ -516,14 +553,18 @@ class MainWindow(QWidget):
     
     def show_instance_config(self):
         """显示实例配置对话框"""
+        # 自定义镜像模式禁用实例配置
+        if self.image_source_combo.currentData() == "PRIVATE":
+            self.show_message("当前选择自定义镜像，实例配置不可用", "warning", 3000)
+            return
         self.btn_instance_config.setEnabled(False)
         main_app = self.parent()
         while main_app and not isinstance(main_app, QMainWindow):
             main_app = main_app.parent()
-        
+
         if main_app and hasattr(main_app, 'start_loading_status'):
             main_app.start_loading_status()
-        
+
         try:
             if not CVM_MANAGER_AVAILABLE:
                 if main_app and hasattr(main_app, 'stop_loading_status'):
@@ -531,7 +572,7 @@ class MainWindow(QWidget):
                 self.show_message("请先安装依赖：pip install -r requirements.txt", "error", 5000)
                 self.btn_instance_config.setEnabled(True)
                 return
-            
+
             if not self.cvm_manager:
                 if not SECRET_ID or not SECRET_KEY:
                     if main_app and hasattr(main_app, 'stop_loading_status'):
@@ -551,9 +592,9 @@ class MainWindow(QWidget):
                     self.show_message(f"无法初始化CVM管理器: {str(e)}", "error", 5000)
                     self.btn_instance_config.setEnabled(True)
                     return
-            
+
             dialog = InstanceConfigDialog(self.cvm_manager, self)
-            
+
             def on_config_loaded():
                 if main_app and hasattr(main_app, 'stop_loading_status'):
                     main_app.stop_loading_status()
@@ -561,14 +602,14 @@ class MainWindow(QWidget):
                 if dialog.result() == QDialog.Accepted:
                     self.show_message("实例配置已保存", "success", 2000)
                 self.btn_instance_config.setEnabled(True)
-            
+
             def on_dialog_finished(result):
                 if main_app and hasattr(main_app, 'stop_loading_status'):
                     main_app.stop_loading_status()
                 self.btn_instance_config.setEnabled(True)
-            
+
             dialog.finished.connect(on_dialog_finished)
-            
+
             if hasattr(dialog, 'load_thread'):
                 dialog.load_thread.finished.connect(on_config_loaded)
             else:
@@ -589,5 +630,65 @@ class MainWindow(QWidget):
         self.btn_instance_config.setEnabled(True)
         if main_app and hasattr(main_app, 'stop_loading_status'):
             main_app.stop_loading_status()
+
+    def on_image_source_changed(self):
+        """镜像来源切换时，更新自定义镜像列表与实例配置按钮状态"""
+        source = self.image_source_combo.currentData()
+        if source == "PRIVATE":
+            self.btn_instance_config.setEnabled(False)
+            self.custom_image_combo.setEnabled(True)
+            if not self.custom_images:
+                self.load_custom_images()
+        else:
+            self.btn_instance_config.setEnabled(True)
+            self.custom_image_combo.setEnabled(False)
+        self.refresh_image_selection()
+
+    def load_custom_images(self):
+        """加载自定义镜像列表"""
+        if not CVM_MANAGER_AVAILABLE:
+            return
+        if not self.cvm_manager:
+            return
+        try:
+            images = self.cvm_manager.get_images("PRIVATE_IMAGE")
+            self.custom_images = images or []
+            self.refresh_image_selection()
+        except Exception as e:
+            self.custom_image_combo.clear()
+            self.custom_image_combo.addItem(f"加载失败: {str(e)}", None)
+            self.custom_image_combo.setEnabled(False)
+            self.btn_create.setEnabled(False)
+
+    def refresh_image_selection(self):
+        """根据镜像来源刷新下拉内容和创建按钮可用性"""
+        source = self.image_source_combo.currentData()
+        self.btn_create.setEnabled(True)
+        self.custom_image_combo.clear()
+        if source == "PRIVATE":
+            self.btn_instance_config.setEnabled(False)
+            if not self.custom_images:
+                self.custom_image_combo.addItem("无可用自定义镜像", None)
+                self.custom_image_combo.setEnabled(False)
+                self.btn_create.setEnabled(False)
+            else:
+                for img in self.custom_images:
+                    name = img.get("ImageName") or img.get("ImageId")
+                    self.custom_image_combo.addItem(f"{name} ({img.get('ImageId')})", img.get("ImageId"))
+                self.custom_image_combo.setEnabled(True)
+                self.custom_image_combo.setCurrentIndex(0)
+                if self.custom_image_combo.currentData() is None:
+                    self.btn_create.setEnabled(False)
+        else:
+            # 公共镜像模式：显示当前实例配置中的镜像
+            from config.config_manager import get_instance_config
+            config = get_instance_config()
+            image_id = config.get("default_image_id")
+            label = image_id or "请配置实例镜像"
+            self.custom_image_combo.addItem(label, image_id)
+            self.custom_image_combo.setEnabled(False)
+            self.btn_instance_config.setEnabled(True)
+            if not image_id:
+                self.btn_create.setEnabled(False)
 
 

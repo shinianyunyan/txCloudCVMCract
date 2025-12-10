@@ -484,7 +484,7 @@ class InstanceConfigDialog(QDialog):
         if not self.cvm_manager:
             self._show_message("CVM管理器未初始化，无法保存配置", "error")
             return
-        
+
         cpu_text = self.cpu_edit.text().strip()
         memory_text = self.memory_edit.text().strip()
         region_data = self.region_combo.currentData()
@@ -492,55 +492,36 @@ class InstanceConfigDialog(QDialog):
         image_data = self.image_combo.currentData()
         password = self.password_edit.text()
         password_confirm = self.password_confirm_edit.text()
-        
+
         if not cpu_text or not cpu_text.isdigit() or int(cpu_text) <= 0:
             self._show_message("请输入有效的CPU核数（大于0的数字）", "warning")
             return
-        
+
         if not memory_text or not memory_text.isdigit() or int(memory_text) <= 0:
             self._show_message("请输入有效的内存大小（大于0的数字）", "warning")
             return
-        
+
         cpu = int(cpu_text)
         memory = int(memory_text)
-        
+
         if not region_data:
             self._show_message("请选择区域", "warning")
             return
-        
+
         if not password:
             self._show_message("请输入密码", "warning")
             return
-        
+
         if password != password_confirm:
             self._show_message("两次输入的密码不一致", "warning")
             return
-        
-        if image_data:
-            try:
-                images = self.cvm_manager.get_images("PUBLIC_IMAGE")
-                for img in images:
-                    if img['ImageId'] == image_data:
-                        break
-            except:
-                pass
-        
+
         from utils.utils import validate_password
         is_valid, error_msg = validate_password(password)
         if not is_valid:
             self._show_message(f"密码验证失败: {error_msg}", "error")
             return
-        
-        if region_data and not zone_data:
-            try:
-                zones = self.cvm_manager.get_zones(region_data)
-                if not zones:
-                    self._show_message(f"区域 {region_data} 没有可用区，请检查配置", "error")
-                    return
-            except Exception as e:
-                self._show_message(f"无法验证区域配置: {str(e)}", "error")
-                return
-        
+
         if image_data:
             try:
                 images = self.cvm_manager.get_images("PUBLIC_IMAGE")
@@ -551,13 +532,30 @@ class InstanceConfigDialog(QDialog):
             except Exception as e:
                 self._show_message(f"无法验证镜像配置: {str(e)}", "error")
                 return
-        
+
+        if region_data and not zone_data:
+            try:
+                zones = self.cvm_manager.get_zones(region_data)
+                if not zones:
+                    self._show_message(f"区域 {region_data} 没有可用区，请检查配置", "error")
+                    return
+            except Exception as e:
+                self._show_message(f"无法验证区域配置: {str(e)}", "error")
+                return
+
         success = save_instance_config(int(cpu_text), int(memory_text), region_data, zone_data, image_data, password)
-        
+
         if success:
             super().accept()
         else:
             self._show_message("配置保存失败，请重试", "error")
+
+    def _get_main_app(self):
+        """向上找到具有 run_in_background 的主窗口"""
+        parent = self.parent()
+        while parent and not hasattr(parent, "run_in_background"):
+            parent = parent.parent()
+        return parent
     
     def showEvent(self, event):
         """对话框显示事件"""

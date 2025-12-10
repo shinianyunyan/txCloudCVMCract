@@ -7,11 +7,38 @@
     - 管理加载状态展示与退出确认对话框。
 """
 import os
+import logging
 from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QMessageBox, QMenuBar, QMenu, QAction, QApplication, QDialog, QLabel, QPushButton, QHBoxLayout, QStatusBar
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QObject, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon
 from ui.main_window import MainWindow
 from ui.styles import get_style_sheet
+
+class Worker(QObject):
+    """
+    通用后台任务执行器。
+
+    将耗时函数放入独立线程，避免阻塞主界面。
+    """
+    finished = pyqtSignal(object)
+    error = pyqtSignal(str)
+
+    def __init__(self, func, *args, **kwargs):
+        super().__init__()
+        self.func = func
+        self.args = args
+        self.kwargs = kwargs
+
+    def run(self):
+        logger = logging.getLogger("CVM_Manager")
+        try:
+            logger.info("后台任务执行开始")
+            result = self.func(*self.args, **self.kwargs)
+            logger.info("后台任务执行结束")
+            self.finished.emit(result)
+        except Exception as e:
+            logger.exception("后台任务执行异常")
+            self.error.emit(str(e))
 
 
 class CVMApp(QMainWindow):
@@ -27,9 +54,10 @@ class CVMApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.loading_timer = QTimer()
-        self.loading_timer.setSingleShot(False)
+        self.loading_timer.setSingleShot(True)  # 单次定时，回调内自行续约
         self.loading_dots = 1
         self.is_loading = False
+        self._bg_threads = []  # 保存后台线程引用，防止被GC
         self.init_ui()
     
     def init_ui(self):
@@ -182,10 +210,10 @@ class CVMApp(QMainWindow):
         dialog.setWindowTitle("确认退出")
         dialog.setModal(True)
         
-        dialog_width = 400
+        dialog_width = 300
         dialog_height = 150
-        button_width = 100
-        button_height = 35
+        button_width = 80
+        button_height = 25
         
         dialog.setFixedSize(dialog_width, dialog_height)
         
@@ -250,7 +278,6 @@ class CVMApp(QMainWindow):
         if self.loading_timer.isActive():
             self.loading_timer.stop()
         self._update_loading_status()
-        self.loading_timer.start(300)
     
     def stop_loading_status(self):
         """停止加载状态，恢复就绪"""
@@ -266,10 +293,62 @@ class CVMApp(QMainWindow):
             return
         if not hasattr(self, 'status_label'):
             return
-        self.loading_dots += 1
-        if self.loading_dots > 3:
-            self.loading_dots = 1
+        # 循环 1~3 个点，定时器每次触发都会刷新
+        self.loading_dots = (self.loading_dots % 3) + 1
         dots = "." * self.loading_dots
         self.status_label.setText(f'<span style="font-weight: bold; color: #f57c00;">加载中{dots}</span> | 欢迎使用腾讯云 CVM 实例管理工具')
+        # 若仍处于加载状态，则续约下一次动画更新
+        if self.is_loading:
+            self.loading_timer.start(300)
+
+    def run_in_background(self, func, callback=None, auto_stop=True, err_callback=None, *args, **kwargs):
+        """
+        在后台线程运行耗时任务，避免阻塞 UI。
+
+        Args:
+            func: 耗时函数
+            callback: 完成后的回调（在主线程执行），入参为 func 返回值
+            auto_stop: 是否在完成后自动停止加载动画
+            err_callback: 异常回调（在主线程执行），入参为错误信息
+        """
+        from utils.utils import setup_logger
+        logger = setup_logger()
+
+        self.start_loading_status()
+
+        thread = QThread()
+        worker = Worker(func, *args, **kwargs)
+        worker.moveToThread(thread)
+
+        def handle_finished(result):
+            logger.info("后台任务完成")
+            if auto_stop:
+                self.stop_loading_status()
+            if callback:
+                callback(result)
+            self._bg_threads = [t for t in self._bg_threads if t is not thread]
+
+        def handle_error(msg):
+            logger.error(f"后台任务出错: {msg}")
+            if auto_stop:
+                self.stop_loading_status()
+            if err_callback:
+                err_callback(msg)
+            else:
+                QMessageBox.critical(self, "错误", msg)
+            self._bg_threads = [t for t in self._bg_threads if t is not thread]
+
+        thread.started.connect(lambda: logger.info("后台线程启动"))
+        # 强制使用 Queued 连接，确保 run 在线程事件循环中执行
+        thread.started.connect(worker.run, type=Qt.QueuedConnection)
+        worker.finished.connect(handle_finished)
+        worker.error.connect(handle_error)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._bg_threads.append(thread)
+        logger.info("后台任务启动")
+        thread.start()
 
 
