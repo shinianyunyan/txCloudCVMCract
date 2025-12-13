@@ -23,7 +23,7 @@ class InstanceList(QTableWidget):
     def init_ui(self):
         """初始化表格列配置、交互模式与基础样式。"""
         # 设置列标题与顺序
-        columns = ["选择", "实例ID", "实例名称", "状态", "IP", "密码", "CPU", "内存(GB)", "区域", "可用区", "创建时间"]
+        columns = ["选择", "实例ID", "实例名称", "状态", "IP", "密码", "CPU", "内存(GB)", "区域", "创建时间"]
         self.setColumnCount(len(columns))
         self.setHorizontalHeaderLabels(columns)
         
@@ -230,12 +230,9 @@ class InstanceList(QTableWidget):
             region = instance.get("Region", "")
             self.setItem(row, 8, QTableWidgetItem(f"{region} ({get_region_name(region)})"))
             
-            # 可用区
-            self.setItem(row, 9, QTableWidgetItem(instance.get("Zone", "")))
-            
             # 创建时间
             created_time = instance.get("CreatedTime", "")
-            self.setItem(row, 10, QTableWidgetItem(str(created_time)))
+            self.setItem(row, 9, QTableWidgetItem(str(created_time)))
         
         # 恢复之前选中的复选框状态（暂时断开信号避免触发更新）
         self.itemChanged.disconnect(self._on_item_changed)

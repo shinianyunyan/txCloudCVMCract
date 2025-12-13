@@ -6,10 +6,13 @@
     - 支持后台拉取区域与公共镜像，并按平台分类筛选。
     - 提供价格预估与参数校验。
 """
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton, QSpinBox, QComboBox, QLineEdit, QLabel, QMessageBox, QDialogButtonBox, QScrollArea, QWidget, QMainWindow
+import json
+import os
+import tempfile
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton, QSpinBox, QComboBox, QLineEdit, QLabel, QMessageBox, QDialogButtonBox, QScrollArea, QWidget
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QIntValidator
-from config.config_manager import get_instance_config, save_instance_config, get_api_config
+from config.config_manager import get_instance_config, save_instance_config
 from utils.db_manager import get_db
 
 # 延迟导入
@@ -42,7 +45,7 @@ class InstanceConfigDialog(QDialog):
         self.zones_cache = {}
         # 默认优先展示 Debian 镜像
         self.current_platform = "DEBIAN"
-        self.is_updating_config = False  # 标志：是否是更新配置操作
+        self.temp_image_file = None
         self.init_ui()
         self.load_from_db()
     
@@ -190,16 +193,7 @@ class InstanceConfigDialog(QDialog):
         self.price_label.setStyleSheet("color: #ff6600; font-size: 14px; font-weight: bold; padding: 10px; background-color: #fff5e6; border: 1px solid #ffcc99; border-radius: 4px;")
         layout.addWidget(self.price_label)
         
-        # 按钮区域
-        button_layout = QHBoxLayout()
-        
-        # 左侧：更新配置信息按钮
-        self.btn_update_config = QPushButton("更新配置信息")
-        self.btn_update_config.clicked.connect(self.on_update_config_clicked)
-        button_layout.addWidget(self.btn_update_config)
-        button_layout.addStretch()
-        
-        # 右侧：保存和取消按钮
+        # 按钮
         button_box = QDialogButtonBox(
             QDialogButtonBox.Save | QDialogButtonBox.Cancel
         )
@@ -207,9 +201,7 @@ class InstanceConfigDialog(QDialog):
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         self.save_btn = button_box.button(QDialogButtonBox.Save)
-        button_layout.addWidget(button_box)
-        
-        layout.addLayout(button_layout)
+        layout.addWidget(button_box)
         
         self.setLayout(layout)
     
@@ -250,6 +242,7 @@ class InstanceConfigDialog(QDialog):
         self.images_data = images
         self.all_images = images or []
         self.platform_images = self._categorize_images(self.all_images)
+        self._save_temp_images()
         self.load_config()
     
     def load_config(self):
@@ -258,9 +251,6 @@ class InstanceConfigDialog(QDialog):
             config = get_instance_config()
         else:
             config = self.config_data
-        
-        # 设置标志，表示正在加载配置，跳过自动询价
-        self._loading_config = True
         
         # 设置默认值
         self.cpu_edit.setText(str(config.get("default_cpu", 2)))
@@ -314,10 +304,6 @@ class InstanceConfigDialog(QDialog):
             if index >= 0:
                 self.zone_combo.setCurrentIndex(index)
         
-        # 清除标志，恢复自动询价
-        self._loading_config = False
-        
-        # 最后统一调用一次询价
         self.update_price()
     
     def populate_platform_combo(self):
@@ -372,9 +358,7 @@ class InstanceConfigDialog(QDialog):
                     f"{name} [{platform}] ({image['ImageId']})",
                     image["ImageId"]
                 )
-        # 只有在非加载配置状态下才自动询价
-        if not getattr(self, '_loading_config', False):
-            self.update_price()
+        self.update_price()
     
     def on_platform_changed(self):
         """镜像类型（平台）切换时筛选已拉取的镜像"""
@@ -409,17 +393,70 @@ class InstanceConfigDialog(QDialog):
             buckets.setdefault(key, []).append(img)
         return buckets
 
+    def _save_temp_images(self):
+        """将拉取的镜像缓存到临时文件，方便后续筛选"""
+        try:
+            data = {
+                "all_images": self.all_images,
+                "platform_images_keys": list(self.platform_images.keys())
+            }
+            temp_path = os.path.join(tempfile.gettempdir(), "cvm_images_cache.json")
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            self.temp_image_file = temp_path
+        except Exception:
+            # 缓存失败不影响主流程
+            self.temp_image_file = None
+
+    def _cleanup_temp_images(self):
+        """删除临时镜像缓存文件"""
+        if self.temp_image_file and os.path.exists(self.temp_image_file):
+            try:
+                os.remove(self.temp_image_file)
+            except Exception:
+                pass
+
+    def accept(self):
+        """保存配置"""
+        try:
+            super().accept()
+        finally:
+            self._stop_price_thread()
+            self._cleanup_temp_images()
+
     def reject(self):
         """取消配置"""
         try:
             super().reject()
         finally:
             self._stop_price_thread()
+            self._cleanup_temp_images()
 
     def closeEvent(self, event):
-        """窗口关闭时清理"""
+        """窗口关闭时清理缓存文件"""
         self._stop_price_thread()
+        self._cleanup_temp_images()
         super().closeEvent(event)
+        
+        # 设置已保存的配置
+        config = self.config_data or get_instance_config()
+        if config.get("default_region"):
+            index = self.region_combo.findData(config["default_region"])
+            if index >= 0:
+                self.region_combo.setCurrentIndex(index)
+                self.on_region_changed()
+        
+        if config.get("default_image_id"):
+            index = self.image_combo.findData(config["default_image_id"])
+            if index >= 0:
+                self.image_combo.setCurrentIndex(index)
+        
+        if config.get("default_zone"):
+            index = self.zone_combo.findData(config["default_zone"])
+            if index >= 0:
+                self.zone_combo.setCurrentIndex(index)
+        
+        self.update_price()
     
     def on_region_changed(self):
         """区域变化时更新可用区"""
@@ -442,15 +479,10 @@ class InstanceConfigDialog(QDialog):
             self.platform_images = self._categorize_images(self.all_images)
             self.populate_platform_combo()
 
-        # 只有在非加载配置状态下才自动询价
-        if not getattr(self, '_loading_config', False):
-            self.update_price()
+        self.update_price()
     
     def update_price(self):
         """兼容旧调用，内部触发节流的价格查询"""
-        # 如果正在加载配置，跳过询价（会在 load_config 最后统一调用）
-        if getattr(self, '_loading_config', False):
-            return
         self.schedule_price_update()
 
     def on_price_related_changed(self, *args, **kwargs):
@@ -666,10 +698,16 @@ class InstanceConfigDialog(QDialog):
         # 同步校验+保存，不再走后台任务
         try:
             do_validate_and_save()
-            self._stop_price_thread()
             super().accept()
         except Exception as e:
             self._show_message(str(e), "error")
+
+    def _get_main_app(self):
+        """向上找到具有 run_in_background 的主窗口"""
+        parent = self.parent()
+        while parent and not hasattr(parent, "run_in_background"):
+            parent = parent.parent()
+        return parent
 
     def eventFilter(self, obj, event):
         """用于禁用滚轮对特定 SpinBox 的影响"""
@@ -713,363 +751,4 @@ class InstanceConfigDialog(QDialog):
                 QMessageBox.warning(self, "警告", message)
             else:
                 QMessageBox.information(self, "提示", message)
-    
-    def _get_main_app(self):
-        """获取主应用窗口（CVMApp）"""
-        parent = self.parent()
-        while parent:
-            if isinstance(parent, QMainWindow):
-                return parent
-            parent = parent.parent()
-        return None
-    
-    def _get_main_window(self):
-        """获取主窗口（MainWindow）"""
-        return self.parent()
-    
-    def on_update_config_clicked(self):
-        """更新配置信息按钮点击事件"""
-        # 弹出确认框
-        reply = QMessageBox.question(
-            self,
-            "确认更新",
-            "是否确认更新配置信息？\n\n这将从腾讯云API同步最新的区域、可用区和镜像信息。",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
-        if reply != QMessageBox.Yes:
-            return
-        
-        # 获取主窗口和主应用
-        main_window = self._get_main_window()
-        main_app = self._get_main_app()
-        
-        if not main_window or not main_app:
-            self._show_message("无法访问主窗口", "error")
-            return
-        
-        # 设置标志：这是更新配置操作，不是保存配置
-        self.is_updating_config = True
-        
-        # 允许关闭对话框
-        self.accept()
-        
-        # 使用 QTimer 延迟执行，确保对话框完全关闭后再执行后续操作
-        def execute_after_close():
-            # 禁用创建实例按钮
-            if hasattr(main_window, 'btn_create'):
-                main_window.btn_create.setEnabled(False)
-            
-            # 显示消息提示
-            if hasattr(main_window, 'show_message'):
-                main_window.show_message("成功发起配置更新", "info", 5000)
-            
-            # 更新状态栏为"加载中"
-            if hasattr(main_app, 'status_label'):
-                main_app.status_label.setText('<span style="font-weight: bold; color: #f57c00;">加载中...</span> | 正在更新配置信息')
-            
-            # 异步调用配置更新（使用保存的引用，而不是 self）
-            from ui.app import CVMApp
-            from utils.utils import setup_logger
-            logger = setup_logger()
-            
-            def update_task():
-                """配置更新任务"""
-                try:
-                    # 获取API配置
-                    api_config = get_api_config() if get_api_config else {}
-                    secret_id = api_config.get("secret_id")
-                    secret_key = api_config.get("secret_key")
-                    default_region = api_config.get("default_region", "ap-beijing")
-                    
-                    if not secret_id or not secret_key:
-                        raise RuntimeError("未配置腾讯云 API 凭证")
-                    
-                    # 初始化CVM管理器
-                    from core.cvm_manager import CVMManager
-                    cvm_manager = CVMManager(secret_id, secret_key, default_region)
-                    
-                    db = get_db()
-                    
-                    # 1. 拉取区域列表
-                    logger.info("开始更新区域列表...")
-                    regions = cvm_manager.get_regions()
-                    db.replace_regions(regions)
-                    logger.info(f"已更新 {len(regions)} 个区域")
-                    
-                    # 2. 并发拉取各区域的可用区和镜像
-                    import threading
-                    from concurrent.futures import ThreadPoolExecutor, as_completed
-                    
-                    def load_region_data(region_info):
-                        """单个线程处理一个区域：查询可用区和镜像"""
-                        region_id = region_info.get("Region") or region_info.get("region")
-                        if not region_id:
-                            return None
-                        
-                        # 每个线程使用独立的 CVMManager 实例
-                        try:
-                            thread_manager = CVMManager(secret_id, secret_key, region_id)
-                        except Exception as exc:
-                            logger.error(f"区域 {region_id} 初始化失败（{exc}）")
-                            return {"region": region_id, "zones": 0, "images": 0, "error": str(exc)}
-                        
-                        result = {"region": region_id, "zones": 0, "images": 0, "error": None}
-                        
-                        # 查询可用区
-                        try:
-                            zones = thread_manager.get_zones(region_id)
-                            db.replace_zones(region_id, zones)
-                            result["zones"] = len(zones) if zones else 0
-                        except Exception as exc:
-                            logger.error(f"区域 {region_id} 可用区同步失败（{exc}）")
-                            result["error"] = f"可用区失败: {str(exc)}"
-                        
-                        # 查询镜像
-                        try:
-                            images = thread_manager.get_images("PUBLIC_IMAGE", limit=100)
-                            db.replace_images(region_id, "PUBLIC_IMAGE", images)
-                            result["images"] = len(images) if images else 0
-                        except Exception as exc:
-                            logger.error(f"区域 {region_id} 公共镜像同步失败（{exc}）")
-                            if result["error"]:
-                                result["error"] += f"; 镜像失败: {str(exc)}"
-                            else:
-                                result["error"] = f"镜像失败: {str(exc)}"
-                        
-                        return result
-                    
-                    logger.info(f"开始并发更新 {len(regions)} 个区域的数据...")
-                    with ThreadPoolExecutor(max_workers=10) as executor:
-                        futures = {executor.submit(load_region_data, region): region for region in regions or []}
-                        completed = 0
-                        for future in as_completed(futures):
-                            completed += 1
-                            try:
-                                result = future.result()
-                                if result:
-                                    logger.info(f"区域 {result['region']} 更新完成 (可用区: {result.get('zones', 0)}, 镜像: {result.get('images', 0)}) [{completed}/{len(regions)}]")
-                            except Exception as exc:
-                                region_info = futures[future]
-                                region_id = region_info.get("Region") or region_info.get("region")
-                                logger.error(f"区域 {region_id} 处理失败（{exc}）")
-                    
-                    logger.info("配置更新完成")
-                    return True
-                    
-                except Exception as e:
-                    logger.error(f"配置更新失败: {e}")
-                    raise
-            
-            # 使用主应用的异步执行方法
-            if isinstance(main_app, CVMApp):
-                def on_success(result):
-                    """更新成功回调"""
-                    # 更新状态栏为"就绪"
-                    if hasattr(main_app, 'status_label'):
-                        main_app.status_label.setText('<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 配置更新完成')
-                    
-                    # 启用创建实例按钮
-                    if hasattr(main_window, 'btn_create'):
-                        main_window.btn_create.setEnabled(True)
-                    
-                    # 显示成功消息
-                    if hasattr(main_window, 'show_message'):
-                        main_window.show_message("配置更新成功", "success", 5000)
-                
-                def on_error(err_msg):
-                    """更新失败回调"""
-                    # 更新状态栏为"就绪"
-                    if hasattr(main_app, 'status_label'):
-                        main_app.status_label.setText('<span style="font-weight: bold; color: #2e7d32;">就绪</span>')
-                    
-                    # 启用创建实例按钮
-                    if hasattr(main_window, 'btn_create'):
-                        main_window.btn_create.setEnabled(True)
-                    
-                    # 显示错误消息
-                    if hasattr(main_window, 'show_message'):
-                        main_window.show_message(f"配置更新失败: {err_msg}", "error", 5000)
-                
-                # 修改函数名以便 run_in_background 识别任务类型
-                update_task.__name__ = "update_config"
-                
-                main_app.run_in_background(
-                    update_task,
-                    callback=on_success,
-                    err_callback=on_error,
-                    use_loading=False
-                )
-            else:
-                # 如果无法使用异步方法，直接执行（不推荐）
-                try:
-                    update_task()
-                    if hasattr(main_app, 'status_label'):
-                        main_app.status_label.setText('<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 配置更新完成')
-                    if hasattr(main_window, 'btn_create'):
-                        main_window.btn_create.setEnabled(True)
-                    if hasattr(main_window, 'show_message'):
-                        main_window.show_message("配置更新成功", "success", 5000)
-                except Exception as e:
-                    if hasattr(main_app, 'status_label'):
-                        main_app.status_label.setText('<span style="font-weight: bold; color: #2e7d32;">就绪</span>')
-                    if hasattr(main_window, 'btn_create'):
-                        main_window.btn_create.setEnabled(True)
-                    if hasattr(main_window, 'show_message'):
-                        main_window.show_message(f"配置更新失败: {str(e)}", "error", 5000)
-        
-        # 延迟 100ms 执行，确保对话框完全关闭
-        QTimer.singleShot(100, execute_after_close)
-    
-    def _update_config_async(self, main_window, main_app):
-        """异步更新配置信息"""
-        from ui.app import CVMApp
-        from utils.utils import setup_logger
-        logger = setup_logger()
-        
-        def update_task():
-            """配置更新任务"""
-            try:
-                # 获取API配置
-                api_config = get_api_config() if get_api_config else {}
-                secret_id = api_config.get("secret_id")
-                secret_key = api_config.get("secret_key")
-                default_region = api_config.get("default_region", "ap-beijing")
-                
-                if not secret_id or not secret_key:
-                    raise RuntimeError("未配置腾讯云 API 凭证")
-                
-                # 初始化CVM管理器
-                from core.cvm_manager import CVMManager
-                cvm_manager = CVMManager(secret_id, secret_key, default_region)
-                
-                db = get_db()
-                
-                # 1. 拉取区域列表
-                logger.info("开始更新区域列表...")
-                regions = cvm_manager.get_regions()
-                db.replace_regions(regions)
-                logger.info(f"已更新 {len(regions)} 个区域")
-                
-                # 2. 并发拉取各区域的可用区和镜像
-                import threading
-                from concurrent.futures import ThreadPoolExecutor, as_completed
-                
-                def load_region_data(region_info):
-                    """单个线程处理一个区域：查询可用区和镜像"""
-                    region_id = region_info.get("Region") or region_info.get("region")
-                    if not region_id:
-                        return None
-                    
-                    # 每个线程使用独立的 CVMManager 实例
-                    try:
-                        thread_manager = CVMManager(secret_id, secret_key, region_id)
-                    except Exception as exc:
-                        logger.error(f"区域 {region_id} 初始化失败（{exc}）")
-                        return {"region": region_id, "zones": 0, "images": 0, "error": str(exc)}
-                    
-                    result = {"region": region_id, "zones": 0, "images": 0, "error": None}
-                    
-                    # 查询可用区
-                    try:
-                        zones = thread_manager.get_zones(region_id)
-                        db.replace_zones(region_id, zones)
-                        result["zones"] = len(zones) if zones else 0
-                    except Exception as exc:
-                        logger.error(f"区域 {region_id} 可用区同步失败（{exc}）")
-                        result["error"] = f"可用区失败: {str(exc)}"
-                    
-                    # 查询镜像
-                    try:
-                        images = thread_manager.get_images("PUBLIC_IMAGE", limit=100)
-                        db.replace_images(region_id, "PUBLIC_IMAGE", images)
-                        result["images"] = len(images) if images else 0
-                    except Exception as exc:
-                        logger.error(f"区域 {region_id} 公共镜像同步失败（{exc}）")
-                        if result["error"]:
-                            result["error"] += f"; 镜像失败: {str(exc)}"
-                        else:
-                            result["error"] = f"镜像失败: {str(exc)}"
-                    
-                    return result
-                
-                logger.info(f"开始并发更新 {len(regions)} 个区域的数据...")
-                with ThreadPoolExecutor(max_workers=10) as executor:
-                    futures = {executor.submit(load_region_data, region): region for region in regions or []}
-                    completed = 0
-                    for future in as_completed(futures):
-                        completed += 1
-                        try:
-                            result = future.result()
-                            if result:
-                                logger.info(f"区域 {result['region']} 更新完成 (可用区: {result.get('zones', 0)}, 镜像: {result.get('images', 0)}) [{completed}/{len(regions)}]")
-                        except Exception as exc:
-                            region_info = futures[future]
-                            region_id = region_info.get("Region") or region_info.get("region")
-                            logger.error(f"区域 {region_id} 处理失败（{exc}）")
-                
-                logger.info("配置更新完成")
-                return True
-                
-            except Exception as e:
-                logger.error(f"配置更新失败: {e}")
-                raise
-        
-        # 使用主应用的异步执行方法
-        if isinstance(main_app, CVMApp):
-            def on_success(result):
-                """更新成功回调"""
-                # 更新状态栏为"就绪"
-                if hasattr(main_app, 'status_label'):
-                    main_app.status_label.setText('<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 配置更新完成')
-                
-                # 启用创建实例按钮
-                if hasattr(main_window, 'btn_create'):
-                    main_window.btn_create.setEnabled(True)
-                
-                # 显示成功消息
-                if hasattr(main_window, 'show_message'):
-                    main_window.show_message("配置更新成功", "success", 5000)
-            
-            def on_error(err_msg):
-                """更新失败回调"""
-                # 更新状态栏为"就绪"
-                if hasattr(main_app, 'status_label'):
-                    main_app.status_label.setText('<span style="font-weight: bold; color: #2e7d32;">就绪</span>')
-                
-                # 启用创建实例按钮
-                if hasattr(main_window, 'btn_create'):
-                    main_window.btn_create.setEnabled(True)
-                
-                # 显示错误消息
-                if hasattr(main_window, 'show_message'):
-                    main_window.show_message(f"配置更新失败: {err_msg}", "error", 5000)
-            
-            # 修改函数名以便 run_in_background 识别任务类型
-            update_task.__name__ = "update_config"
-            
-            main_app.run_in_background(
-                update_task,
-                callback=on_success,
-                err_callback=on_error,
-                use_loading=False
-            )
-        else:
-            # 如果无法使用异步方法，直接执行（不推荐）
-            try:
-                update_task()
-                if hasattr(main_app, 'status_label'):
-                    main_app.status_label.setText('<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 配置更新完成')
-                if hasattr(main_window, 'btn_create'):
-                    main_window.btn_create.setEnabled(True)
-                if hasattr(main_window, 'show_message'):
-                    main_window.show_message("配置更新成功", "success", 5000)
-            except Exception as e:
-                if hasattr(main_app, 'status_label'):
-                    main_app.status_label.setText('<span style="font-weight: bold; color: #2e7d32;">就绪</span>')
-                if hasattr(main_window, 'btn_create'):
-                    main_window.btn_create.setEnabled(True)
-                if hasattr(main_window, 'show_message'):
-                    main_window.show_message(f"配置更新失败: {str(e)}", "error", 5000)
 

@@ -12,6 +12,7 @@ from ui.components.instance_list import InstanceList
 from ui.components.message_bar import MessageBar
 from ui.dialogs.settings_dialog import SettingsDialog
 from ui.dialogs.instance_config_dialog import InstanceConfigDialog
+from ui.dialogs.send_command_dialog import SendCommandDialog
 from utils.db_manager import get_db
 try:
     from config.config_manager import get_api_config
@@ -54,6 +55,8 @@ class MainWindow(QWidget):
         self.starting_instance_ids = set()
         # 关机中实例监控
         self.stopping_instance_ids = set()
+        # 指令执行中监控（存储InvocationId）
+        self.executing_invocation_ids = set()
         self.pending_poll_timer = QTimer()
         self.pending_poll_timer.setInterval(2_000)
         self.pending_poll_timer.timeout.connect(self._poll_pending_instances)
@@ -218,10 +221,17 @@ class MainWindow(QWidget):
         self.btn_reset_pwd.setFixedHeight(32)
         self.btn_reset_pwd.setStyleSheet("font-size: 12px; padding: 4px 12px;")
         
+        self.btn_send_command = QPushButton("📤 下发指令")
+        self.btn_send_command.setProperty("class", "")
+        self.btn_send_command.clicked.connect(self.batch_send_command)
+        self.btn_send_command.setFixedHeight(32)
+        self.btn_send_command.setStyleSheet("font-size: 12px; padding: 4px 12px;")
+        
         batch_btn_layout.addWidget(self.btn_start)
         batch_btn_layout.addWidget(self.btn_stop)
         batch_btn_layout.addWidget(self.btn_terminate)
         batch_btn_layout.addWidget(self.btn_reset_pwd)
+        batch_btn_layout.addWidget(self.btn_send_command)
         batch_btn_layout.addStretch()
         
         batch_btn_frame.setLayout(batch_btn_layout)
@@ -386,12 +396,13 @@ class MainWindow(QWidget):
         # 定时器已在构造处设置间隔，保持运行
     
     def _poll_pending_instances(self):
-        """轮询新创建实例状态/IP、开机中实例状态和关机中实例状态，每2s查询一次，达成条件即停止监控"""
+        """轮询新创建实例状态/IP、开机中实例状态、关机中实例状态和指令执行状态，每2s查询一次，达成条件即停止监控"""
         has_pending = bool(self.pending_instance_ids)
         has_starting = bool(self.starting_instance_ids)
         has_stopping = bool(self.stopping_instance_ids)
+        has_executing = bool(self.executing_invocation_ids)
         
-        if not has_pending and not has_starting and not has_stopping:
+        if not has_pending and not has_starting and not has_stopping and not has_executing:
             if self.pending_poll_timer.isActive():
                 self.pending_poll_timer.stop()
             return
@@ -438,13 +449,41 @@ class MainWindow(QWidget):
                             stopping_completed.add(instance_id)
                 self.stopping_instance_ids.difference_update(stopping_completed)
             
+            # 处理指令执行中的任务（查询执行任务状态）
+            if has_executing:
+                executing_completed = set()
+                for invocation_id in list(self.executing_invocation_ids):
+                    try:
+                        result = self.cvm_manager.describe_invocation_tasks(invocation_id=invocation_id)
+                        tasks = result.get("InvocationTaskSet", [])
+                        # 检查所有任务是否都已完成（SUCCESS或FAILED）
+                        all_completed = True
+                        for task in tasks:
+                            status = task.get("TaskStatus", "")
+                            if status not in ["SUCCESS", "FAILED"]:
+                                all_completed = False
+                                break
+                        if all_completed and tasks:
+                            executing_completed.add(invocation_id)
+                    except Exception as e:
+                        logger = setup_logger()
+                        logger.warning(f"查询执行任务状态失败: {e}")
+                self.executing_invocation_ids.difference_update(executing_completed)
+                
+                # 如果所有指令都执行完成，更新状态栏
+                if not self.executing_invocation_ids:
+                    self._set_status_text('<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 指令执行完成')
+            
             # 刷新本地展示（跳过同步，避免额外 API）
             self.refresh_instances(silent=True, skip_sync=True)
             
             # 如果所有监控都完成了，停止定时器
-            if not self.pending_instance_ids and not self.starting_instance_ids and not self.stopping_instance_ids and self.pending_poll_timer.isActive():
+            if not self.pending_instance_ids and not self.starting_instance_ids and not self.stopping_instance_ids and not self.executing_invocation_ids and self.pending_poll_timer.isActive():
                 self.pending_poll_timer.stop()
         except Exception as e:
+            from utils.utils import setup_logger
+            logger = setup_logger()
+            logger.error(f"轮询状态失败: {e}")
             self.show_message(f"轮询实例状态失败: {str(e)}", "warning", 3000)
 
     def _set_status_text(self, rich_text: str):
@@ -1361,6 +1400,136 @@ class MainWindow(QWidget):
                     on_success(result)
                 except Exception as e:
                     on_error(str(e))
+    
+    def batch_send_command(self):
+        """批量下发指令"""
+        from utils.utils import setup_logger
+        logger = setup_logger()
+        
+        if not self.cvm_manager:
+            self.show_message("CVM管理器未初始化，请先配置API凭证", "error", 5000)
+            return
+        
+        # 1. 获取选中的实例ID
+        selected_ids = self.instance_list.get_selected_instance_ids()
+        if not selected_ids:
+            self.show_message("请先选择要下发指令的实例", "warning", 3000)
+            return
+        
+        # 2. 从数据库获取选中实例的Platform信息
+        db = get_db()
+        instances = db.get_instances(selected_ids)
+        
+        if len(instances) != len(selected_ids):
+            self.show_message("无法获取部分实例的信息", "error", 5000)
+            return
+        
+        platforms = set()
+        instance_platforms = {}
+        
+        for instance in instances:
+            instance_id = instance.get("instance_id")
+            platform = (instance.get("platform") or "").upper()
+            # 判断是Linux还是Windows
+            if "WINDOWS" in platform:
+                platform_type = "WINDOWS"
+            else:
+                # 默认为Linux（包括Ubuntu、CentOS、Debian等）
+                platform_type = "LINUX"
+            
+            platforms.add(platform_type)
+            instance_platforms[instance_id] = platform_type
+        
+        # 3. 检查是否都是同一类型系统
+        if len(platforms) > 1:
+            platform_names = {
+                "WINDOWS": "Windows",
+                "LINUX": "Linux"
+            }
+            platform_list = [platform_names.get(p, p) for p in platforms]
+            self.show_message(f"选中的实例系统类型不一致（包含：{', '.join(platform_list)}），只能对单一系统类型下发指令", "error", 5000)
+            return
+        
+        # 4. 确定系统类型
+        platform_type = list(platforms)[0]
+        platform_name = "Windows" if platform_type == "WINDOWS" else "Linux"
+        
+        # 5. 打开指令输入对话框
+        dialog = SendCommandDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            command = dialog.get_command()
+            if command:
+                # 6. 立即显示"成功发起下发指令"消息
+                self.show_message(f"成功发起下发指令，共{len(selected_ids)}个实例", "info", 5000)
+                
+                # 7. 更新状态栏为"指令下发中"
+                self._set_status_text('<span style="font-weight: bold; color: #f57c00;">指令下发中...</span> | 正在下发指令到实例')
+                
+                # 8. 确定命令类型和工作目录
+                if platform_type == "WINDOWS":
+                    command_type = "POWERSHELL"
+                    working_directory = r"C:\Program Files\qcloud\tat_agent\workdir"
+                    username = "System"
+                else:
+                    command_type = "SHELL"
+                    working_directory = "/root"
+                    username = "root"
+                
+                # 9. 异步调用API执行命令
+                def execute_command_task():
+                    """后台任务：调用API执行命令"""
+                    if not self.cvm_manager:
+                        raise RuntimeError("CVM管理器未初始化")
+                    
+                    result = self.cvm_manager.run_command(
+                        instance_ids=selected_ids,
+                        command_content=command,
+                        command_type=command_type,
+                        working_directory=working_directory,
+                        timeout=60,
+                        username=username
+                    )
+                    return result
+                
+                def on_success(result):
+                    """API调用成功"""
+                    invocation_id = result.get("InvocationId")
+                    command_id = result.get("CommandId")
+                    logger.info(f"API下发指令成功: InvocationId={invocation_id}, CommandId={command_id}")
+                    
+                    # 添加到监控列表
+                    if invocation_id:
+                        self.executing_invocation_ids.add(invocation_id)
+                        # 启动轮询定时器（如果还没启动）
+                        if not self.pending_poll_timer.isActive():
+                            self.pending_poll_timer.start()
+                    
+                    # 显示成功消息
+                    self.show_message(f"指令下发成功，共{len(selected_ids)}个实例", "success", 5000)
+                
+                def on_error(err_msg):
+                    """API调用失败"""
+                    logger.error(f"API下发指令失败: {err_msg}")
+                    self.show_message(f"指令下发失败: {err_msg}", "error", 5000)
+                    # 恢复状态栏
+                    self._set_status_text('<span style="font-weight: bold; color: #2e7d32;">就绪</span>')
+                
+                # 获取主应用对象并调用后台任务
+                main_app = self.window()
+                if hasattr(main_app, "run_in_background"):
+                    main_app.run_in_background(
+                        execute_command_task,
+                        callback=on_success,
+                        err_callback=on_error,
+                        use_loading=False
+                    )
+                else:
+                    # 降级方案：直接调用
+                    try:
+                        result = execute_command_task()
+                        on_success(result)
+                    except Exception as e:
+                        on_error(str(e))
     
     def show_settings(self):
         """显示设置对话框（API凭证设置）"""

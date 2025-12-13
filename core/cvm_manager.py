@@ -12,6 +12,7 @@ from tencentcloud.common import credential
 from tencentcloud.common.profile.client_profile import ClientProfile
 from tencentcloud.common.profile.http_profile import HttpProfile
 from tencentcloud.cvm.v20170312 import cvm_client, models
+# TAT 相关导入改为延迟导入，避免预加载时出错
 from utils.utils import setup_logger, validate_password, get_region_name
 from utils.db_manager import get_db
 try:
@@ -43,6 +44,9 @@ class CVMManager:
         if not self.secret_id or not self.secret_key:
             raise ValueError("请先配置腾讯云API凭证")
         self._init_client(None)
+        # TAT客户端延迟初始化，只在需要时（执行命令）才初始化
+        self.tat_client = None
+        self._tat_models = None
     
     def _init_client(self, region):
         """
@@ -61,6 +65,29 @@ class CVMManager:
         if region:
             self.region = target_region
         self.logger.info(f"CVM客户端初始化成功，区域: {target_region}")
+    
+    def _init_tat_client(self):
+        """初始化TAT（腾讯云自动化工具）客户端（延迟初始化，幂等）"""
+        # 如果已经初始化，直接返回
+        if self.tat_client is not None:
+            return
+        
+        try:
+            from tencentcloud.tat.v20201028 import tat_client, models as tat_models
+            self._tat_models = tat_models  # 保存引用供后续使用
+        except ImportError as e:
+            self.logger.warning(f"无法导入TAT SDK: {e}，下发指令功能将不可用")
+            self.tat_client = None
+            self._tat_models = None
+            return
+        
+        cred = credential.Credential(self.secret_id, self.secret_key)
+        http_profile = HttpProfile()
+        http_profile.endpoint = "tat.tencentcloudapi.com"
+        client_profile = ClientProfile()
+        client_profile.httpProfile = http_profile
+        self.tat_client = tat_client.TatClient(cred, self.region, client_profile)
+        self.logger.info(f"TAT客户端初始化成功，区域: {self.region}")
     
     def get_regions(self):
         """获取可用区域列表，用于区域选择或资源不足时的兜底重试。"""
@@ -681,6 +708,202 @@ class CVMManager:
     def list_images(self):
         """获取自定义镜像列表"""
         return self.get_images("PRIVATE_IMAGE")
+    
+    def run_command(self, instance_ids, command_content, command_type="SHELL", working_directory=None, timeout=60, username=None, command_name=None, description=None):
+        """
+        执行命令（下发指令）
+        
+        根据API文档要求：
+        - 实例必须处于 RUNNING 状态
+        - 实例需要处于 VPC 网络
+        - 实例必须安装 TAT Agent 且 Agent 在线
+        
+        Args:
+            instance_ids: 实例ID列表（上限200）
+            command_content: 命令内容（原始字符串，会自动Base64编码，长度不超过64KB）
+            command_type: 命令类型，SHELL（Linux）或POWERSHELL/BAT（Windows），默认SHELL
+            working_directory: 工作目录，SHELL默认为/root，POWERSHELL默认为C:\Program Files\qcloud\tat_agent\workdir
+            timeout: 超时时间（秒），默认60，取值范围[1, 86400]
+            username: 执行用户，默认root（Linux）或System（Windows）
+            command_name: 命令名称（可选），仅支持中文、英文、数字、下划线、分隔符"-"、小数点，最大长度60字节
+            description: 命令描述（可选），不超过120字符
+        
+        Returns:
+            dict: 包含CommandId、InvocationId和RequestId
+        """
+        # 延迟初始化TAT客户端
+        if not self.tat_client:
+            self._init_tat_client()
+            if not self.tat_client:
+                raise RuntimeError("TAT客户端未初始化，请检查TAT SDK是否正确安装")
+        
+        import base64
+        
+        try:
+            # Base64编码命令内容
+            command_base64 = base64.b64encode(command_content.encode('utf-8')).decode('utf-8')
+            
+            req = self._tat_models.RunCommandRequest()
+            req.Content = command_base64
+            req.InstanceIds = instance_ids
+            req.CommandType = command_type
+            req.Timeout = timeout
+            req.SaveCommand = False  # 不保存命令（根据API文档，默认为false）
+            
+            # 可选参数：命令名称和描述
+            if command_name:
+                req.CommandName = command_name
+            if description:
+                req.Description = description
+            
+            # 工作目录：如果未指定，使用API文档中的默认值
+            if working_directory:
+                req.WorkingDirectory = working_directory
+            else:
+                # 根据命令类型设置默认工作目录（符合API文档）
+                if command_type == "SHELL":
+                    req.WorkingDirectory = "/root"
+                elif command_type in ["POWERSHELL", "BAT"]:
+                    req.WorkingDirectory = r"C:\Program Files\qcloud\tat_agent\workdir"
+            
+            if username:
+                req.Username = username
+            
+            resp = self.tat_client.RunCommand(req)
+            self.logger.info(f"执行命令成功: InvocationId={resp.InvocationId}, CommandId={resp.CommandId}")
+            return {
+                "CommandId": resp.CommandId,
+                "InvocationId": resp.InvocationId,
+                "RequestId": resp.RequestId
+            }
+        except Exception as e:
+            self.logger.error(f"执行命令失败: {e}")
+            # 将技术性错误信息转换为更友好的提示（根据API文档的错误码）
+            error_str = str(e)
+            import re
+            
+            # 提取实例ID（如果存在）
+            instance_match = re.search(r'instance[`\s]+([a-z0-9-]+)', error_str, re.IGNORECASE)
+            instance_id = instance_match.group(1) if instance_match else "指定"
+            
+            # 根据API文档的错误码提供友好提示
+            if "AgentNotInstalled" in error_str or "agent not installed" in error_str.lower():
+                raise RuntimeError(
+                    f"实例 {instance_id} 未安装 TAT Agent。\n\n"
+                    "请先在实例上安装 TAT Agent 后才能使用下发指令功能。\n\n"
+                    "安装方法：\n"
+                    "1. Linux: 执行安装脚本\n"
+                    "   wget https://tat-gz-1258344699.cos.ap-guangzhou.myqcloud.com/tat_agent_install.sh\n"
+                    "   bash tat_agent_install.sh\n"
+                    "2. Windows: 在腾讯云控制台下载并安装 TAT Agent"
+                )
+            elif "AgentStatusNotOnline" in error_str or "agent.*not.*online" in error_str.lower():
+                raise RuntimeError(
+                    f"实例 {instance_id} 的 TAT Agent 不在线。\n\n"
+                    "请确保：\n"
+                    "1. TAT Agent 已正确安装\n"
+                    "2. Agent 服务正在运行\n"
+                    "3. 实例网络连接正常"
+                )
+            elif "InstanceStateNotRunning" in error_str or "instance.*not.*running" in error_str.lower():
+                raise RuntimeError(
+                    f"实例 {instance_id} 未处于运行中状态。\n\n"
+                    "根据API文档要求，执行命令时实例必须处于 RUNNING 状态。\n"
+                    "请先启动实例后再尝试下发指令。"
+                )
+            elif "InvalidInstanceId" in error_str:
+                raise RuntimeError(
+                    f"实例ID无效：{instance_id}\n\n"
+                    "请检查实例ID是否正确，或实例是否存在于当前区域。"
+                )
+            raise
+    
+    def describe_invocation_tasks(self, invocation_id=None, invocation_task_ids=None, instance_id=None, limit=20, offset=0):
+        """
+        查询执行任务详情
+        
+        根据API文档：
+        - 参数不支持同时指定 InvocationTaskIds 和 Filters
+        - 每次请求的 Filters 上限为10，Filter.Values 上限为5
+        - InvocationTaskIds 每次请求上限为100
+        
+        Args:
+            invocation_id: 执行活动ID（通过过滤器查询）
+            invocation_task_ids: 执行任务ID列表（每次请求上限100，与Filters互斥）
+            instance_id: 实例ID（通过过滤器查询，与InvocationTaskIds互斥）
+            limit: 返回数量，默认20，最大值为100
+            offset: 偏移量，默认0
+        
+        Returns:
+            dict: 包含TotalCount、InvocationTaskSet和RequestId
+                InvocationTaskSet中每个任务包含：
+                - InvocationTaskId: 执行任务ID
+                - InvocationId: 执行活动ID
+                - InstanceId: 实例ID
+                - TaskStatus: 任务状态（PENDING/RUNNING/SUCCESS/FAILED/TIMEOUT等）
+                - CommandId: 命令ID
+                - TaskResult: 任务结果（ExitCode、Output、ExecStartTime、ExecEndTime等）
+                - ErrorInfo: 错误信息
+        """
+        # 延迟初始化TAT客户端
+        if not self.tat_client:
+            self._init_tat_client()
+            if not self.tat_client:
+                raise RuntimeError("TAT客户端未初始化，请检查TAT SDK是否正确安装")
+        
+        try:
+            req = self._tat_models.DescribeInvocationTasksRequest()
+            req.Limit = limit
+            req.Offset = offset
+            req.HideOutput = False  # 显示输出
+            
+            if invocation_task_ids:
+                req.InvocationTaskIds = invocation_task_ids
+            elif invocation_id or instance_id:
+                # 使用过滤器
+                filters = []
+                if invocation_id:
+                    filter_item = self._tat_models.Filter()
+                    filter_item.Name = "invocation-id"
+                    filter_item.Values = [invocation_id]
+                    filters.append(filter_item)
+                if instance_id:
+                    filter_item = self._tat_models.Filter()
+                    filter_item.Name = "instance-id"
+                    filter_item.Values = [instance_id]
+                    filters.append(filter_item)
+                req.Filters = filters
+            
+            resp = self.tat_client.DescribeInvocationTasks(req)
+            self.logger.info(f"查询执行任务成功: TotalCount={resp.TotalCount}")
+            return {
+                "TotalCount": resp.TotalCount,
+                "InvocationTaskSet": [
+                    {
+                        "InvocationTaskId": task.InvocationTaskId,
+                        "InvocationId": task.InvocationId,
+                        "InstanceId": task.InstanceId,
+                        "TaskStatus": task.TaskStatus,
+                        "CommandId": task.CommandId,
+                        "StartTime": task.StartTime,
+                        "EndTime": task.EndTime,
+                        "CreatedTime": task.CreatedTime,
+                        "UpdatedTime": task.UpdatedTime,
+                        "TaskResult": {
+                            "ExitCode": task.TaskResult.ExitCode if task.TaskResult else None,
+                            "Output": task.TaskResult.Output if task.TaskResult else None,
+                            "ExecStartTime": task.TaskResult.ExecStartTime if task.TaskResult else None,
+                            "ExecEndTime": task.TaskResult.ExecEndTime if task.TaskResult else None,
+                        } if task.TaskResult else None,
+                        "ErrorInfo": task.ErrorInfo if hasattr(task, 'ErrorInfo') else ""
+                    }
+                    for task in resp.InvocationTaskSet
+                ],
+                "RequestId": resp.RequestId
+            }
+        except Exception as e:
+            self.logger.error(f"查询执行任务失败: {e}")
+            raise
 
 
 if __name__ == "__main__":
