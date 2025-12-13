@@ -54,3 +54,6 @@ cvm_manager.log
 
 # API说明文档
 API说明文档/
+
+# 数据库
+data/

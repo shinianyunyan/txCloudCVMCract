@@ -7,7 +7,7 @@
 """
 import os
 from PyQt5.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QToolButton, QWidget, QHBoxLayout, QLabel, QStyledItemDelegate
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QRect
 from PyQt5.QtGui import QIcon, QClipboard
 from PyQt5.QtWidgets import QApplication
 from utils.utils import get_instance_status_name, get_region_name
@@ -35,18 +35,87 @@ class InstanceList(QTableWidget):
         
         # 第一列复选框使用委托保持居中
         class CenteredCheckboxDelegate(QStyledItemDelegate):
-            def initStyleOption(self, option, index):
-                super().initStyleOption(option, index)
+            def __init__(self, table_widget, parent=None):
+                super().__init__(parent)
+                self.table_widget = table_widget
+            
+            def paint(self, painter, option, index):
+                # 获取复选框状态
+                item = self.table_widget.item(index.row(), index.column())
+                if not item:
+                    super().paint(painter, option, index)
+                    return
+                
+                # 设置选项为居中
                 option.displayAlignment = Qt.AlignCenter | Qt.AlignVCenter
+                option.decorationAlignment = Qt.AlignCenter | Qt.AlignVCenter
+                
+                # 计算复选框应该绘制的中心位置
+                rect = option.rect
+                checkbox_size = 16  # 复选框大小
+                x = rect.left() + (rect.width() - checkbox_size) // 2
+                y = rect.top() + (rect.height() - checkbox_size) // 2
+                checkbox_rect = QRect(x, y, checkbox_size, checkbox_size)
+                
+                # 创建复选框选项
+                from PyQt5.QtWidgets import QStyleOptionButton, QStyle, QApplication
+                from PyQt5.QtCore import QEvent
+                checkbox_option = QStyleOptionButton()
+                checkbox_option.rect = checkbox_rect
+                checkbox_option.state = QStyle.State_Enabled
+                if item.checkState() == Qt.Checked:
+                    checkbox_option.state |= QStyle.State_On
+                else:
+                    checkbox_option.state |= QStyle.State_Off
+                
+                # 绘制复选框
+                style = QApplication.style()
+                style.drawControl(QStyle.CE_CheckBox, checkbox_option, painter)
+            
+            def editorEvent(self, event, model, option, index):
+                """处理复选框点击事件"""
+                from PyQt5.QtCore import QEvent
+                if event.type() == QEvent.MouseButtonPress or event.type() == QEvent.MouseButtonDblClick:
+                    item = self.table_widget.item(index.row(), index.column())
+                    if item:
+                        # 计算复选框区域
+                        rect = option.rect
+                        checkbox_size = 16
+                        x = rect.left() + (rect.width() - checkbox_size) // 2
+                        y = rect.top() + (rect.height() - checkbox_size) // 2
+                        checkbox_rect = QRect(x, y, checkbox_size, checkbox_size)
+                        
+                        # 检查点击是否在复选框区域内
+                        if checkbox_rect.contains(event.pos()):
+                            # 切换复选框状态
+                            if item.checkState() == Qt.Checked:
+                                item.setCheckState(Qt.Unchecked)
+                            else:
+                                item.setCheckState(Qt.Checked)
+                            return True
+                return super().editorEvent(event, model, option, index)
         
-        self.setItemDelegateForColumn(0, CenteredCheckboxDelegate(self))
+        self.setItemDelegateForColumn(0, CenteredCheckboxDelegate(self, self))
         
         # 默认列宽（用户仍可手动调整）
         header = self.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive)
         header.setStretchLastSection(False)
         header.setDefaultAlignment(Qt.AlignCenter)
-        self.setColumnWidth(0, 50)
+        # "选择"列需要足够宽度以显示表头文本（☑ 选择、☐ 选择、☒ 选择）
+        header.setMinimumSectionSize(80)
+        self.setColumnWidth(0, 80)
+        
+        # 在表头第一列添加全选复选框（使用自定义表头项）
+        header_item = QTableWidgetItem("☑ 选择")
+        header_item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+        self.setHorizontalHeaderItem(0, header_item)
+        
+        # 连接表头点击事件，实现全选功能
+        header.sectionClicked.connect(self._on_header_section_clicked)
+        
+        # 连接项目改变事件，监听复选框状态变化
+        self.itemChanged.connect(self._on_item_changed)
         self.setColumnWidth(1, 170)
         self.setColumnWidth(2, 170)
         self.setColumnWidth(3, 90)
@@ -102,6 +171,9 @@ class InstanceList(QTableWidget):
     
     def update_instances(self, instances):
         """根据实例数据刷新表格行，并附加复制/显示密码控件。"""
+        # 保存当前选中的实例ID列表
+        selected_ids = self.get_selected_instance_ids()
+        
         self.setRowCount(0)
         
         for instance in instances:
@@ -115,6 +187,9 @@ class InstanceList(QTableWidget):
             checkbox.setText("")
             checkbox.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
             self.setItem(row, 0, checkbox)
+            
+            # 连接复选框状态改变事件，更新表头状态
+            # 注意：QTableWidgetItem 没有直接的信号，我们需要通过 itemChanged 信号来监听
             
             # 实例ID
             self.setItem(row, 1, QTableWidgetItem(instance.get("InstanceId", "")))
@@ -161,6 +236,23 @@ class InstanceList(QTableWidget):
             # 创建时间
             created_time = instance.get("CreatedTime", "")
             self.setItem(row, 10, QTableWidgetItem(str(created_time)))
+        
+        # 恢复之前选中的复选框状态（暂时断开信号避免触发更新）
+        self.itemChanged.disconnect(self._on_item_changed)
+        for row in range(self.rowCount()):
+            instance_id_item = self.item(row, 1)
+            if instance_id_item and instance_id_item.text() in selected_ids:
+                checkbox = self.item(row, 0)
+                if checkbox:
+                    checkbox.setCheckState(Qt.Checked)
+        self.itemChanged.connect(self._on_item_changed)
+        
+        # 确保"选择"列宽度足够（防止被压缩）
+        if self.columnWidth(0) < 80:
+            self.setColumnWidth(0, 80)
+        
+        # 更新表头复选框状态
+        self._update_header_checkbox_state()
     
     def _create_copy_cell(self, text):
         """创建带复制按钮的 IP 单元格。"""
@@ -306,5 +398,73 @@ class InstanceList(QTableWidget):
                 if instance_id_item:
                     selected_ids.append(instance_id_item.text())
         return selected_ids
+    
+    def clear_selection(self):
+        """清除所有复选框的选中状态"""
+        for row in range(self.rowCount()):
+            checkbox = self.item(row, 0)
+            if checkbox:
+                checkbox.setCheckState(Qt.Unchecked)
+        # 更新表头复选框状态
+        self._update_header_checkbox_state()
+    
+    def _on_item_changed(self, item):
+        """处理项目改变事件，更新表头复选框状态"""
+        # 只处理第一列（复选框列）的变化
+        if item.column() == 0:
+            self._update_header_checkbox_state()
+    
+    def _on_header_section_clicked(self, logical_index):
+        """处理表头点击事件，实现全选/取消全选功能"""
+        if logical_index == 0:  # 第一列（选择列）
+            # 检查当前是否全部选中
+            all_checked = True
+            has_items = False
+            for row in range(self.rowCount()):
+                checkbox = self.item(row, 0)
+                if checkbox:
+                    has_items = True
+                    if checkbox.checkState() != Qt.Checked:
+                        all_checked = False
+                        break
+            
+            # 如果全部选中则取消全选，否则全选
+            new_state = Qt.Unchecked if all_checked and has_items else Qt.Checked
+            
+            for row in range(self.rowCount()):
+                checkbox = self.item(row, 0)
+                if checkbox:
+                    checkbox.setCheckState(new_state)
+            
+            # 更新表头显示
+            self._update_header_checkbox_state()
+    
+    def _update_header_checkbox_state(self):
+        """更新表头复选框的显示状态"""
+        if self.rowCount() == 0:
+            header_item = self.horizontalHeaderItem(0)
+            if header_item:
+                header_item.setText("☐ 选择")
+            return
+        
+        # 检查是否全部选中
+        all_checked = True
+        any_checked = False
+        for row in range(self.rowCount()):
+            checkbox = self.item(row, 0)
+            if checkbox:
+                if checkbox.checkState() == Qt.Checked:
+                    any_checked = True
+                else:
+                    all_checked = False
+        
+        header_item = self.horizontalHeaderItem(0)
+        if header_item:
+            if all_checked and any_checked:
+                header_item.setText("☑ 选择")
+            elif any_checked:
+                header_item.setText("☒ 选择")  # 部分选中
+            else:
+                header_item.setText("☐ 选择")
 
 

@@ -30,14 +30,33 @@ class Worker(QObject):
         self.kwargs = kwargs
 
     def run(self):
+        import logging
         logger = logging.getLogger("CVM_Manager")
+        func_name = getattr(self.func, '__name__', str(self.func))
+        
+        # 根据函数名推断任务类型
+        task_desc = func_name
+        if 'create' in func_name.lower() or 'create_task' in func_name:
+            task_desc = "创建实例"
+        elif 'terminate' in func_name.lower():
+            task_desc = "销毁实例"
+        elif 'start' in func_name.lower():
+            task_desc = "启动实例"
+        elif 'stop' in func_name.lower():
+            task_desc = "停止实例"
+        elif 'reset' in func_name.lower():
+            task_desc = "重置密码"
+        
+        logger.info(f"[Worker.run 被调用] 任务: {task_desc}, 函数名: {func_name}")
         try:
-            logger.info("后台任务执行开始")
+            logger.info(f"开始执行: {task_desc}")
             result = self.func(*self.args, **self.kwargs)
-            logger.info("后台任务执行结束")
+            logger.info(f"执行完成: {task_desc}")
             self.finished.emit(result)
         except Exception as e:
-            logger.exception("后台任务执行异常")
+            logger.error(f"执行失败: {task_desc}, 错误: {str(e)}")
+            import traceback
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
             self.error.emit(str(e))
 
 
@@ -267,6 +286,22 @@ class CVMApp(QMainWindow):
         """)
         
         if dialog.exec_() == QDialog.Accepted:
+            # 等待所有后台线程完成
+            import logging
+            logger = logging.getLogger("CVM_Manager")
+            if self._bg_threads:
+                logger.info(f"等待 {len(self._bg_threads)} 个后台线程完成...")
+                # 请求所有线程退出
+                for thread in self._bg_threads[:]:  # 使用切片复制，避免迭代时修改列表
+                    if thread.isRunning():
+                        thread.quit()
+                        thread.wait(3000)  # 等待最多3秒
+                        if thread.isRunning():
+                            logger.warning(f"线程 {thread} 未在3秒内完成，强制终止")
+                            thread.terminate()
+                            thread.wait(1000)  # 再等待1秒
+                self._bg_threads.clear()
+                logger.info("所有后台线程已清理")
             event.accept()
         else:
             event.ignore()
@@ -301,36 +336,53 @@ class CVMApp(QMainWindow):
         if self.is_loading:
             self.loading_timer.start(300)
 
-    def run_in_background(self, func, callback=None, auto_stop=True, err_callback=None, *args, **kwargs):
+    def run_in_background(self, func, callback=None, auto_stop=True, err_callback=None, use_loading=True, *args, **kwargs):
         """
-        在后台线程运行耗时任务，避免阻塞 UI。
+        在独立线程运行耗时任务，避免阻塞 UI。
 
         Args:
             func: 耗时函数
             callback: 完成后的回调（在主线程执行），入参为 func 返回值
             auto_stop: 是否在完成后自动停止加载动画
             err_callback: 异常回调（在主线程执行），入参为错误信息
+            use_loading: 是否显示加载动画
         """
-        from utils.utils import setup_logger
-        logger = setup_logger()
-
-        self.start_loading_status()
+        import logging
+        logger = logging.getLogger("CVM_Manager")
+        
+        func_name = getattr(func, '__name__', str(func))
+        task_desc = func_name
+        if 'create' in func_name.lower() or 'create_task' in func_name:
+            task_desc = "创建实例"
+        elif 'terminate' in func_name.lower():
+            task_desc = "销毁实例"
+        elif 'start' in func_name.lower():
+            task_desc = "启动实例"
+        elif 'stop' in func_name.lower():
+            task_desc = "停止实例"
+        elif 'reset' in func_name.lower():
+            task_desc = "重置密码"
+        
+        logger.info(f"启动线程执行: {task_desc}")
+        
+        if use_loading:
+            self.start_loading_status()
 
         thread = QThread()
         worker = Worker(func, *args, **kwargs)
         worker.moveToThread(thread)
 
         def handle_finished(result):
-            logger.info("后台任务完成")
-            if auto_stop:
+            logger.info(f"线程执行完成: {task_desc}")
+            if auto_stop and use_loading:
                 self.stop_loading_status()
             if callback:
                 callback(result)
             self._bg_threads = [t for t in self._bg_threads if t is not thread]
 
         def handle_error(msg):
-            logger.error(f"后台任务出错: {msg}")
-            if auto_stop:
+            logger.error(f"线程执行失败: {task_desc}, 错误: {msg}")
+            if auto_stop and use_loading:
                 self.stop_loading_status()
             if err_callback:
                 err_callback(msg)
@@ -338,17 +390,22 @@ class CVMApp(QMainWindow):
                 QMessageBox.critical(self, "错误", msg)
             self._bg_threads = [t for t in self._bg_threads if t is not thread]
 
-        thread.started.connect(lambda: logger.info("后台线程启动"))
-        # 强制使用 Queued 连接，确保 run 在线程事件循环中执行
-        thread.started.connect(worker.run, type=Qt.QueuedConnection)
+        # 连接信号
         worker.finished.connect(handle_finished)
         worker.error.connect(handle_error)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
+        
+        # 使用 DirectConnection 确保 run 立即执行，避免事件循环问题
+        def start_worker():
+            logger.info(f"[线程事件循环启动] 任务: {task_desc}")
+            worker.run()
+        
+        thread.started.connect(start_worker)
 
         self._bg_threads.append(thread)
-        logger.info("后台任务启动")
+        logger.info(f"[启动线程] 任务: {task_desc}")
         thread.start()
 
 

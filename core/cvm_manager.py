@@ -12,29 +12,32 @@ from tencentcloud.common import credential
 from tencentcloud.common.profile.client_profile import ClientProfile
 from tencentcloud.common.profile.http_profile import HttpProfile
 from tencentcloud.cvm.v20170312 import cvm_client, models
-from config.config import SECRET_ID, SECRET_KEY, DEFAULT_REGION, API_ENDPOINT
 from utils.utils import setup_logger, validate_password, get_region_name
+from utils.db_manager import get_db
 try:
-    from config.config_manager import get_api_config
+    from config.config_manager import get_api_config, API_ENDPOINT
     _use_cfg_mgr = True
 except ImportError:
     _use_cfg_mgr = False
+    API_ENDPOINT = "cvm.tencentcloudapi.com"
 
 
 class CVMManager:
     """CVM 实例管理器，封装实例生命周期与查询操作。"""
     
     def __init__(self, secret_id, secret_key, region):
-        # 支持从配置管理器读取默认凭证与区域，参数缺省时兜底
-        if _use_cfg_mgr and (not secret_id or not secret_key):
+        # 从配置管理器读取默认凭证与区域，参数缺省时兜底
+        if _use_cfg_mgr:
             cfg = get_api_config()
-            self.secret_id = secret_id or cfg.get("secret_id") or SECRET_ID
-            self.secret_key = secret_key or cfg.get("secret_key") or SECRET_KEY
-            self.region = region or cfg.get("default_region") or DEFAULT_REGION
+            self.secret_id = secret_id or cfg.get("secret_id")
+            self.secret_key = secret_key or cfg.get("secret_key")
+            self.region = region or cfg.get("default_region", "ap-beijing")
         else:
-            self.secret_id = secret_id or SECRET_ID
-            self.secret_key = secret_key or SECRET_KEY
-            self.region = region or DEFAULT_REGION
+            # 降级方案：从环境变量读取
+            import os
+            self.secret_id = secret_id or os.getenv("TENCENT_SECRET_ID")
+            self.secret_key = secret_key or os.getenv("TENCENT_SECRET_KEY")
+            self.region = region or os.getenv("TENCENT_DEFAULT_REGION", "ap-beijing")
         
         self.logger = setup_logger("CVM_Manager", "cvm_manager.log", "INFO")
         if not self.secret_id or not self.secret_key:
@@ -235,8 +238,19 @@ class CVMManager:
             raise ValueError(f"密码验证失败: {error_msg}")
         
         try:
+            warnings = []
             if region != self.region:
                 self._init_client(region)
+            
+            # 验证zone是否属于当前region，如果不匹配则自动选择
+            if zone:
+                zones = self.get_zones(region)
+                zone_list = [z.get("Zone") for z in zones or []]
+                if zone not in zone_list:
+                    warn_msg = f"配置的可用区 {zone} 不属于区域 {region}，已自动选择该区域的第一个可用区"
+                    self.logger.warning(warn_msg)
+                    warnings.append(warn_msg)
+                    zone = None
             
             if not zone:
                 zones = self.get_zones(region)
@@ -281,22 +295,98 @@ class CVMManager:
             req.InternetAccessible.InternetChargeType = bandwidth_charge or "TRAFFIC_POSTPAID_BY_HOUR"
             req.InternetAccessible.InternetMaxBandwidthOut = bandwidth or 0
             
-            resp = self.client.RunInstances(req)
+            self.logger.info(f"调用RunInstances API: 区域={region}, 可用区={zone}, 镜像={image_id}, 机型={instance_type}, 数量={count}, 磁盘类型={system_disk_type}")
             
-            if resp.InstanceIdSet:
-                instance_ids = list(resp.InstanceIdSet)
-                self.logger.info(f"成功创建{len(instance_ids)}个实例: {instance_ids}")
+            # 尝试创建实例，如果磁盘类型不支持则自动回退
+            # 支持的磁盘类型：CLOUD_SSD, CLOUD_PREMIUM, CLOUD_BSSD, CLOUD_HSSD
+            resp = None
+            original_error = None
+            tried_types = [system_disk_type]  # 记录已尝试的类型
+            
+            try:
+                resp = self.client.RunInstances(req)
+            except Exception as e:
+                original_error = e
+                error_str = str(e)
+                # 检查是否是磁盘类型不支持的错误（错误码19045或错误信息包含"云硬盘类型"）
+                is_disk_type_error = ("19045" in error_str or 
+                                     "云硬盘类型" in error_str or 
+                                     "云服务器不支持所需云硬盘类型" in error_str or
+                                     ("InvalidParameter" in error_str and "disk" in error_str.lower()))
                 
-                if count == 1:
-                    return {"InstanceId": instance_ids[0], "InstanceIds": instance_ids, "Region": region, "Zone": zone, "Status": "PENDING"}
+                if is_disk_type_error:
+                    # 按优先级尝试其他支持的磁盘类型
+                    # 优先级：CLOUD_PREMIUM（最通用）> CLOUD_SSD > CLOUD_BSSD > CLOUD_HSSD
+                    fallback_types = ["CLOUD_PREMIUM", "CLOUD_SSD", "CLOUD_BSSD", "CLOUD_HSSD"]
+                    # 排除已尝试的类型
+                    fallback_types = [t for t in fallback_types if t not in tried_types]
+                    
+                    for fallback_type in fallback_types:
+                        try:
+                            warn_msg = f"磁盘类型 {tried_types[-1]} 在当前区域/可用区不支持，已尝试 {fallback_type}"
+                            self.logger.warning(warn_msg)
+                            warnings.append(warn_msg)
+                            req.SystemDisk.DiskType = fallback_type
+                            resp = self.client.RunInstances(req)
+                            self.logger.info(f"成功使用磁盘类型 {fallback_type} 创建实例")
+                            break
+                        except Exception as e2:
+                            tried_types.append(fallback_type)
+                            if fallback_type == fallback_types[-1]:
+                                # 所有类型都失败，抛出原始错误
+                                self.logger.error(f"所有磁盘类型都尝试失败: {tried_types}")
+                                raise original_error
+                            continue
                 else:
-                    return {"InstanceIds": instance_ids, "Count": len(instance_ids), "Region": region, "Zone": zone, "Status": "PENDING"}
+                    # 不是磁盘类型错误，直接抛出
+                    raise
+            
+            if resp and resp.InstanceIdSet:
+                instance_ids = list(resp.InstanceIdSet)
+                self.logger.info(f"RunInstances API调用成功: 返回{len(instance_ids)}个实例ID={instance_ids}, RequestId={resp.RequestId}")
+                
+                # 写入本地缓存，前端可直接读取
+                try:
+                    db = get_db()
+                    instance_data = []
+                    for iid in instance_ids:
+                        instance_data.append({
+                            "InstanceId": iid,
+                            "InstanceName": req.InstanceName,
+                            "InstanceState": "PENDING",
+                            "Region": region,
+                            "Zone": zone,
+                            "ImageId": image_id,
+                            "CPU": actual_cpu,
+                            "Memory": actual_memory,
+                            "InstanceType": instance_type,
+                        })
+                    db.upsert_instances(instance_data)
+                    self.logger.info(f"已将{len(instance_ids)}个实例写入数据库: {instance_ids}")
+                except Exception as db_err:
+                    self.logger.error(f"写入实例到数据库失败: {db_err}")
+                    raise
+                
+                result_payload = {
+                    "InstanceIds": instance_ids,
+                    "Region": region,
+                    "Zone": zone,
+                    "Status": "PENDING",
+                    "Warnings": warnings,
+                }
+                if count == 1:
+                    result_payload["InstanceId"] = instance_ids[0]
+                    return result_payload
+                result_payload["Count"] = len(instance_ids)
+                return result_payload
             else:
+                self.logger.error("RunInstances API调用失败: 未返回实例ID")
                 raise ValueError("实例创建失败，未返回实例ID")
         except Exception as e:
             error_msg = str(e)
-            if "资源不足" in error_msg or "sold out" in error_msg.lower():
-                self.logger.warning(f"区域资源不足，尝试其他区域: {error_msg}")
+            self.logger.error(f"创建实例失败: 区域={region}, 可用区={zone}, 错误={error_msg}")
+            if "资源不足" in error_msg or "sold out" in error_msg.lower() or "ResourceInsufficient" in error_msg:
+                self.logger.warning(f"区域{region}资源不足，尝试其他区域")
                 return self._create_fallback(cpu, memory, region, password, image_id, instance_name)
             raise
     
@@ -316,7 +406,18 @@ class CVMManager:
                 continue
         raise ValueError("所有区域都无法创建实例")
     
-    def get_instances(self, region):
+    def _describe_instances(self, region, instance_ids=None, offset=0, limit=100):
+        """单次请求 DescribeInstances，支持传入 offset/limit 或指定 ID 列表。"""
+        req = models.DescribeInstancesRequest()
+        req.Limit = limit
+        if offset:
+            req.Offset = offset
+        if instance_ids:
+            req.InstanceIds = instance_ids
+        resp = self.client.DescribeInstances(req)
+        return resp.InstanceSet
+
+    def get_instances(self, region, instance_ids=None):
         """
         获取实例列表。
 
@@ -327,17 +428,32 @@ class CVMManager:
         try:
             if region and region != self.region:
                 self._init_client(region)
-            
-            req = models.DescribeInstancesRequest()
-            req.Limit = 100  # 控制单次返回数量，避免超量
-            resp = self.client.DescribeInstances(req)
+            # 支持分页/分片（每批最多100）
+            all_instances = []
+            if instance_ids:
+                # 按 100 拆分 ID 查询
+                chunk_size = 100
+                for i in range(0, len(instance_ids), chunk_size):
+                    batch_ids = instance_ids[i:i + chunk_size]
+                    all_instances.extend(self._describe_instances(region, batch_ids))
+            else:
+                offset = 0
+                limit = 100
+                while True:
+                    batch = self._describe_instances(region, None, offset, limit)
+                    if not batch:
+                        break
+                    all_instances.extend(batch)
+                    if len(batch) < limit:
+                        break
+                    offset += limit
             
             from config.config_manager import get_instance_config
             cfg = get_instance_config()
             saved_pwd = cfg.get("default_password", "")  # 统一回填 UI 显示用密码
             
             instances = []
-            for i in resp.InstanceSet:
+            for i in all_instances:
                 placement = i.Placement
                 zone = placement.Zone if placement else ""
                 instance_region = self.region
@@ -364,42 +480,104 @@ class CVMManager:
                     "CreatedTime": i.CreatedTime,
                     "ExpiredTime": i.ExpiredTime,
                     "Platform": getattr(i, 'Platform', ''),
+                    # 兼容缓存逻辑：优先写入公网/私网数组，DB 层会取首个
+                    "PublicIpAddresses": public_ips,
+                    "PrivateIpAddresses": private_ips,
                     "IpAddress": ip,
                     "Password": saved_pwd
                 })
+            
+            try:
+                db = get_db()
+                # 先更新/插入API返回的实例（upsert会自动更新status，去掉-1标识）
+                db.upsert_instances(instances)
+                # 只有在全量查询（不是按ID查询）时才处理缺失记录
+                # 标记不在API返回列表中的实例为-1
+                if not instance_ids:
+                    valid_ids = [ins["InstanceId"] for ins in instances]
+                    db.soft_delete_missing(valid_ids)
+            except Exception as db_err:
+                self.logger.warning(f"写入实例缓存失败: {db_err}")
             
             self.logger.info(f"获取到{len(instances)}个实例")
             return instances
         except Exception as e:
             raise
     
-    def start(self, instance_ids):
-        """批量启动实例。"""
+    def start(self, instance_ids, skip_db_update=False):
+        """
+        批量启动实例。
+
+        Args:
+            instance_ids: 实例 ID 列表
+            skip_db_update: 如果为True，跳过数据库更新（由调用者控制）
+        """
+        prev = None
         try:
+            if isinstance(instance_ids, str):
+                instance_ids = [instance_ids]
+            
+            # 如果不跳过数据库更新，则保存原始状态并标记为STARTING
+            if not skip_db_update:
+                db = get_db()
+                prev = db.get_instances(instance_ids)
+                for iid in instance_ids:
+                    db.update_instance_status(iid, "STARTING")
+            
+            # 调用API启动实例
             req = models.StartInstancesRequest()
             req.InstanceIds = instance_ids
             resp = self.client.StartInstances(req)
-            self.logger.info(f"批量启动{len(instance_ids)}个实例")
+            self.logger.info(f"批量启动{len(instance_ids)}个实例: {instance_ids}")
             return {"RequestId": resp.RequestId, "InstanceIds": instance_ids}
         except Exception as e:
+            # 如果API调用失败且不是跳过数据库更新模式，则回滚状态
+            if not skip_db_update:
+                try:
+                    db = get_db()
+                    for row in prev or []:
+                        db.update_instance_status(row.get("instance_id"), row.get("status") or None)
+                except Exception:
+                    pass
             raise
     
-    def stop(self, instance_ids, force):
+    def stop(self, instance_ids, force, skip_db_update=False):
         """
         批量停止实例。
 
         Args:
             instance_ids: 实例 ID 列表
             force: 是否强制关机（True 会强制，False 优雅停机）
+            skip_db_update: 如果为True，跳过数据库更新（由调用者控制）
         """
+        prev = None
         try:
+            if isinstance(instance_ids, str):
+                instance_ids = [instance_ids]
+            
+            # 如果不跳过数据库更新，则保存原始状态并标记为STOPPING
+            if not skip_db_update:
+                db = get_db()
+                prev = db.get_instances(instance_ids)
+                for iid in instance_ids:
+                    db.update_instance_status(iid, "STOPPING")
+            
+            # 调用API停止实例
             req = models.StopInstancesRequest()
             req.InstanceIds = instance_ids
             req.ForceStop = force
             resp = self.client.StopInstances(req)
-            self.logger.info(f"批量停止{len(instance_ids)}个实例")
+            self.logger.info(f"批量停止{len(instance_ids)}个实例: {instance_ids}")
             return {"RequestId": resp.RequestId, "InstanceIds": instance_ids}
         except Exception as e:
+            # 如果API调用失败且不是跳过数据库更新模式，则回滚状态
+            if not skip_db_update:
+                try:
+                    db = get_db()
+                    for row in prev or []:
+                        db.update_instance_status(row.get("instance_id"), row.get("status") or None)
+                except Exception:
+                    pass
             raise
     
     def reset_pwd(self, instance_ids, password, auto_start=True):
@@ -449,17 +627,41 @@ class CVMManager:
         except Exception as e:
             raise
     
-    def terminate(self, instance_ids):
-        """销毁实例（按量计费），支持单个或列表形式传入。"""
+    def terminate(self, instance_ids, skip_db_update=False):
+        """
+        销毁实例（按量计费），支持单个或列表形式传入。
+        
+        Args:
+            instance_ids: 实例ID列表或单个ID
+            skip_db_update: 如果为True，跳过数据库更新（由调用者控制）
+        """
+        prev = None
         try:
             if isinstance(instance_ids, str):
                 instance_ids = [instance_ids]
+            
+            # 如果不跳过数据库更新，则保存原始状态并标记为-1
+            if not skip_db_update:
+                db = get_db()
+                prev = db.get_instances(instance_ids)
+                for iid in instance_ids:
+                    db.update_instance_status(iid, "-1")
+            
+            # 调用API销毁实例
             req = models.TerminateInstancesRequest()
             req.InstanceIds = instance_ids
             resp = self.client.TerminateInstances(req)
             self.logger.info(f"销毁{len(instance_ids)}个实例: {instance_ids}")
             return {"RequestId": resp.RequestId, "InstanceIds": instance_ids}
         except Exception as e:
+            # 如果API调用失败且不是跳过数据库更新模式，则回滚状态
+            if not skip_db_update:
+                try:
+                    db = get_db()
+                    for row in prev or []:
+                        db.update_instance_status(row.get("instance_id"), row.get("status") or None)
+                except Exception:
+                    pass
             raise
     
     def create_image(self, instance_id, image_name, image_desc):
@@ -479,3 +681,10 @@ class CVMManager:
     def list_images(self):
         """获取自定义镜像列表"""
         return self.get_images("PRIVATE_IMAGE")
+
+
+if __name__ == "__main__":
+    print("错误：此文件是模块文件，不应直接运行。")
+    print("请使用以下命令启动应用程序：")
+    print("  python main.py")
+    exit(1)

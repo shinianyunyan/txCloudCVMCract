@@ -4,7 +4,7 @@
 用于在主窗口内以叠加方式展示多条错误/警告/成功/提示信息，
 自动处理消息队列、位置与定时隐藏。
 """
-from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton
+from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy
 from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QPoint, pyqtSignal
 from PyQt5.QtGui import QColor, QPalette, QPainter
 import uuid
@@ -44,9 +44,12 @@ class MessageItem(QWidget):
         
         # 消息图标和文本
         self.message_label = QLabel()
-        self.message_label.setWordWrap(False)
+        # 允许长文本自动换行，避免被关闭按钮遮挡
+        self.message_label.setWordWrap(True)
         self.message_label.setTextFormat(Qt.RichText)
         self.message_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        # 允许填充水平方向，减少过早换行
+        self.message_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         
         # 关闭按钮
         self.close_btn = QPushButton("×")
@@ -54,10 +57,8 @@ class MessageItem(QWidget):
         self.close_btn.clicked.connect(self.close_message)
         
         layout.addWidget(self.message_label)
-        layout.addStretch()
+        # 移除 addStretch()，让标签直接填充到关闭按钮前
         layout.addWidget(self.close_btn)
-        layout.setAlignment(self.close_btn, Qt.AlignVCenter)
-        layout.setAlignment(self.message_label, Qt.AlignVCenter)
         
         self.setLayout(layout)
         self.setMinimumHeight(40)
@@ -108,6 +109,7 @@ class MessageItem(QWidget):
                 font-weight: 500;
                 padding: 4px;
                 background-color: transparent;
+                margin-right: 8px;  /* 在标签和关闭按钮之间增加一些间距 */
             }}
             MessageItem#MessageItem QPushButton {{
                 background-color: transparent;
@@ -116,6 +118,10 @@ class MessageItem(QWidget):
                 font-size: 18px;
                 font-weight: bold;
                 border-radius: 12px;
+                margin: 0;
+                padding: 0;
+                min-width: 24px;
+                max-width: 24px;
             }}
             MessageItem#MessageItem QPushButton:hover {{
                 background-color: rgba(0, 0, 0, 0.1);
@@ -171,7 +177,7 @@ class MessageBar(QWidget):
         self.messages = []  # 存储所有消息项
         self.message_spacing = 16  # 消息之间的间距（增加间距，确保有间隔）
         self.top_margin = 20  # 距离顶部距离
-        self.right_margin = 20  # 距离右侧距离
+        self.right_margin = self.message_spacing  # 距离右侧距离等于消息间距
         
         self.init_ui()
     
@@ -229,11 +235,13 @@ class MessageBar(QWidget):
             return
         
         parent_rect = self.parent_window.geometry()
-        # 设置合适的宽度（父窗口宽度的35%，最小250，最大400）- 做小一点
+        # 设置合适的宽度（父窗口宽度的35%，最小250，最大400）
         width = max(250, min(400, int(parent_rect.width() * 0.35)))
         
-        # 计算右侧位置（不居中）
-        x = parent_rect.x() + parent_rect.width() - width - self.right_margin
+        # 修改这里：让消息弹窗向左移动，距离右边框的距离等于消息弹窗之间的间距
+        # 原代码：x = parent_rect.x() + parent_rect.width() - width - self.right_margin
+        x = parent_rect.x() + parent_rect.width() - width - self.message_spacing  # 使用message_spacing代替right_margin
+        
         y = parent_rect.y() + self.top_margin
         
         # 更新每个消息项的位置和大小（每个都是独立窗口）
@@ -241,12 +249,8 @@ class MessageBar(QWidget):
             # 设置消息项宽度
             msg.setFixedWidth(width)
             
-            # 更新每个消息项的标签宽度，以便正确换行和计算高度
-            # 减去左右padding(16+16)、间距(12)、关闭按钮宽度(24)
-            label_max_width = width - 16 - 16 - 12 - 24
-            msg.message_label.setMaximumWidth(label_max_width)
-            
-            # 强制更新布局以重新计算高度
+            # 不再手动设置消息标签的最大宽度，让布局自动处理
+            # 这样标签会自动填充到关闭按钮前
             msg.updateGeometry()
             msg.adjustSize()  # 重新调整大小以适应内容
             

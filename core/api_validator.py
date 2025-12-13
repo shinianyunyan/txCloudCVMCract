@@ -9,7 +9,10 @@ from tencentcloud.common import credential
 from tencentcloud.common.profile.client_profile import ClientProfile
 from tencentcloud.common.profile.http_profile import HttpProfile
 from tencentcloud.cvm.v20170312 import cvm_client, models
-from config.config import API_ENDPOINT
+try:
+    from config.config_manager import API_ENDPOINT
+except ImportError:
+    API_ENDPOINT = "cvm.tencentcloudapi.com"
 
 
 def validate_api(secret_id, secret_key, region):

@@ -9,7 +9,6 @@ from PyQt5.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushB
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 import os, sys
 from config.config_manager import get_api_config, save_api_config
-from config.config import SECRET_ID, SECRET_KEY, DEFAULT_REGION
 
 try:
     from core.api_validator import validate_api
@@ -115,9 +114,9 @@ class SettingsDialog(QDialog):
         """加载设置（从配置文件热读取）"""
         # 从配置文件读取（支持热更新）
         api_config = get_api_config()
-        secret_id = api_config.get("secret_id") or SECRET_ID
-        secret_key = api_config.get("secret_key") or SECRET_KEY
-        region = api_config.get("default_region") or DEFAULT_REGION
+        secret_id = api_config.get("secret_id") or os.getenv("TENCENT_SECRET_ID")
+        secret_key = api_config.get("secret_key") or os.getenv("TENCENT_SECRET_KEY")
+        region = api_config.get("default_region") or os.getenv("TENCENT_DEFAULT_REGION", "ap-beijing")
         
         if secret_id:
             self.secret_id_edit.setText(secret_id)
