@@ -37,6 +37,8 @@ class InstanceConfigDialog(QDialog):
     def __init__(self, cvm_manager=None, parent=None):
         super().__init__(parent)
         self.cvm_manager = cvm_manager
+        # 标记是否为“更新配置”操作，由主窗口根据该标记决定后续行为
+        self.is_updating_config = False
         self.config_data = None
         self.regions_data = []
         self.images_data = []
@@ -193,7 +195,9 @@ class InstanceConfigDialog(QDialog):
         self.price_label.setStyleSheet("color: #ff6600; font-size: 14px; font-weight: bold; padding: 10px; background-color: #fff5e6; border: 1px solid #ffcc99; border-radius: 4px;")
         layout.addWidget(self.price_label)
         
-        # 按钮
+        # 底部按钮区：
+        #   左侧：更新配置（触发异步刷新区域/可用区/镜像等配置信息）
+        #   右侧：保存 / 取消（保存当前默认实例配置）
         button_box = QDialogButtonBox(
             QDialogButtonBox.Save | QDialogButtonBox.Cancel
         )
@@ -201,9 +205,30 @@ class InstanceConfigDialog(QDialog):
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         self.save_btn = button_box.button(QDialogButtonBox.Save)
-        layout.addWidget(button_box)
+        self.update_config_btn = QPushButton("更新配置")
+        self.update_config_btn.setToolTip("刷新区域、可用区与公共镜像等配置信息")
+        self.update_config_btn.clicked.connect(self.on_update_config_clicked)
+
+        btn_layout = QHBoxLayout()
+        # 左侧“更新配置”按钮
+        btn_layout.addWidget(self.update_config_btn)
+        # 中间拉伸，右侧对齐保存/取消
+        btn_layout.addStretch()
+        btn_layout.addWidget(button_box)
+
+        layout.addLayout(btn_layout)
         
         self.setLayout(layout)
+
+    def on_update_config_clicked(self):
+        """
+        触发“更新配置”流程：
+            - 仅标记为更新配置操作，不保存当前表单内容
+            - 关闭对话框，由主窗口根据 is_updating_config 启动异步更新
+        """
+        self.is_updating_config = True
+        # 不保存当前配置，仅关闭窗口
+        self.reject()
     
     def load_from_db(self):
         """从本地数据库读取预同步的数据"""
@@ -579,7 +604,14 @@ class InstanceConfigDialog(QDialog):
             self.price_label.setText(price_text)
             if hasattr(self, "save_btn") and self.save_btn:
                 self.save_btn.setEnabled(True)
-            self._price_thread.quit()
+            # 线程可能已在关闭对话框/保存时被提前停止，这里需要做空值与运行状态判断
+            thread = getattr(self, "_price_thread", None)
+            if thread is not None:
+                try:
+                    if thread.isRunning():
+                        thread.quit()
+                except Exception:
+                    pass
             self._price_query_running = False
             if getattr(self, "_price_query_pending", False):
                 self._price_query_pending = False
@@ -593,7 +625,14 @@ class InstanceConfigDialog(QDialog):
             logger.error(f"查询价格失败: {error_msg}")
             if hasattr(self, "save_btn") and self.save_btn:
                 self.save_btn.setEnabled(True)
-            self._price_thread.quit()
+            # 同样需要防止线程在其它地方已被停止导致的空指针
+            thread = getattr(self, "_price_thread", None)
+            if thread is not None:
+                try:
+                    if thread.isRunning():
+                        thread.quit()
+                except Exception:
+                    pass
             self._price_query_running = False
             if getattr(self, "_price_query_pending", False):
                 self._price_query_pending = False

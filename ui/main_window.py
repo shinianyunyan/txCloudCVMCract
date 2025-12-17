@@ -8,6 +8,8 @@
 """
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox, QGroupBox, QFrame, QMainWindow, QSpinBox, QDialog, QComboBox
 from PyQt5.QtCore import Qt, QTimer
+from core.preload import preload_reference_data
+import time
 from ui.components.instance_list import InstanceList
 from ui.components.message_bar import MessageBar
 from ui.dialogs.settings_dialog import SettingsDialog
@@ -41,6 +43,10 @@ class MainWindow(QWidget):
         super().__init__(parent)
         self.cvm_manager = None
         self.message_bar = None
+        # 标记是否正在进行实例配置信息更新（区域/可用区/镜像预加载）
+        self.is_reference_updating = False
+        # 控制在配置更新期间以及刚结束后的短时间内禁止创建实例
+        self.block_creates_until = 0.0
         # 每分钟同步远端到本地库
         self.refresh_timer = QTimer()
         self.refresh_timer.setInterval(60_000)
@@ -494,6 +500,11 @@ class MainWindow(QWidget):
     
     def create_instances(self):
         """使用配置的参数创建实例"""
+        # 若当前正在更新实例配置信息，或刚刚更新完成（短暂保护期内），禁止创建实例，仅提示用户
+        now_ts = time.time()
+        if getattr(self, "is_reference_updating", False) or now_ts < getattr(self, "block_creates_until", 0.0):
+            self.show_message("实例配置信息更新中，暂时无法创建实例，请稍候完成后再试", "warning", 4000)
+            return
         if not CVM_MANAGER_AVAILABLE:
             self.show_message("请先安装依赖：pip install -r requirements.txt", "error", 5000)
             return
@@ -1535,18 +1546,14 @@ class MainWindow(QWidget):
         """显示设置对话框（API凭证设置）"""
         dialog = SettingsDialog(self)
         if dialog.exec_():
-            # 重新初始化管理器（热更新，无需重启）
+            # API 凭证变更后，不在 UI 线程里同步初始化 CVMManager，
+            # 而是清空已有管理器，后续在需要时按新凭证懒加载。
             if CVM_MANAGER_AVAILABLE:
-                try:
-                    api_config = get_api_config() if get_api_config else {}
-                    secret_id = api_config.get("secret_id")
-                    secret_key = api_config.get("secret_key")
-                    self.cvm_manager = CVMManager(secret_id, secret_key, None)
-                    self.show_message("API凭证已更新", "success", 2000)
-                    # 可选：自动刷新实例列表
-                    # self.refresh_instances()
-                except Exception as e:
-                    self.show_message(f"无法初始化CVM管理器: {str(e)}", "error", 5000)
+                # 清空旧管理器实例，确保后续使用最新凭证重新初始化
+                self.cvm_manager = None
+                # 提示用户并触发一次异步的实例配置信息预加载
+                self.show_message("API凭证已更新，正在刷新实例配置信息...", "info", 3000)
+                self._start_reference_update()
     
     def show_instance_config(self):
         """显示实例配置对话框"""
@@ -1583,16 +1590,84 @@ class MainWindow(QWidget):
             
             dialog = InstanceConfigDialog(self.cvm_manager, self)
             dialog.exec_()
-            if dialog.result() == QDialog.Accepted:
-                # 检查是否是更新配置操作，如果是则不显示"保存配置成功"消息
-                if not getattr(dialog, 'is_updating_config', False):
-                    self.show_message("实例配置已保存", "success", 2000)
-                    # 配置变更后立即同步一次并刷新本地
-                    self.refresh_instances(silent=True)
+
+            # 是否是“更新配置”操作（由对话框中的按钮触发）
+            is_updating_config = getattr(dialog, 'is_updating_config', False)
+            if is_updating_config:
+                # 发起异步配置更新：刷新区域/可用区/镜像等参考数据
+                self.show_message("已发起配置更新，请稍候...", "info", 3000)
+                self._start_reference_update()
+            elif dialog.result() == QDialog.Accepted:
+                # 正常保存实例配置
+                self.show_message("实例配置已保存", "success", 2000)
+                # 配置变更后立即同步一次并刷新本地
+                self.refresh_instances(silent=True)
+
             self.btn_instance_config.setEnabled(True)
         except Exception as e:
             self.show_message(f"打开配置对话框失败: {str(e)}", "error", 5000)
             self.btn_instance_config.setEnabled(True)
+
+    def _start_reference_update(self):
+        """
+        启动实例配置信息异步更新：
+            - 复用启动阶段的 preload_reference_data 逻辑，刷新区域/可用区/镜像等数据到本地数据库。
+            - 更新期间禁用“创建实例”按钮，并在主窗口状态栏显示“配置更新中”。
+            - 更新完成后提示用户，并恢复按钮与状态栏为“就绪”。
+        """
+        # 获取顶层应用窗口（CVMApp），用于调度后台任务
+        app_window = self.window()
+
+        # 如果主窗口不存在或不支持 run_in_background，则直接放弃本次更新，避免阻塞 UI
+        if app_window is None or not hasattr(app_window, "run_in_background"):
+            self.show_message("当前窗口不支持后台更新配置，请重启程序后重试", "error", 5000)
+            # 确保状态与标记被复原
+            self.is_reference_updating = False
+            self._set_status_text(
+                '<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 欢迎使用腾讯云 CVM 实例管理工具'
+            )
+            return
+
+        # 标记为更新中，供创建实例等操作进行拦截
+        self.is_reference_updating = True
+        # 在更新期间以及结束后的一小段时间内，禁止创建实例
+        self.block_creates_until = float("inf")
+
+        # 更新状态栏文案为“配置更新中...”
+        self._set_status_text(
+            '<span style="font-weight: bold; color: #f57c00;">配置更新中...</span> | 正在刷新区域、可用区与镜像信息'
+        )
+
+        def on_done(_result):
+            # 更新完成后解除“更新中”标记，并设置短暂保护期，避免积压点击触发创建
+            self.is_reference_updating = False
+            self.block_creates_until = time.time() + 2.0
+            # 恢复状态栏为“就绪”
+            self._set_status_text(
+                '<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 实例配置信息已更新'
+            )
+            # 提示用户更新成功，并刷新实例列表视图
+            self.show_message("实例配置信息已更新", "success", 3000)
+            self.refresh_instances(silent=True, sync_only=True)
+
+        def on_error(msg):
+            # 更新失败后解除“更新中”标记，并设置短暂保护期
+            self.is_reference_updating = False
+            self.block_creates_until = time.time() + 2.0
+            # 恢复状态栏为“就绪”（标明失败）
+            self._set_status_text(
+                '<span style="font-weight: bold; color: #d32f2f;">就绪</span> | 配置更新失败'
+            )
+            self.show_message(f"配置更新失败: {msg}", "error", 5000)
+
+        # 使用主窗口提供的通用后台执行器，避免阻塞 UI
+        app_window.run_in_background(
+            preload_reference_data,
+            callback=on_done,
+            auto_stop=False,   # 不使用通用“加载中”文案，保持自定义状态栏文本
+            err_callback=on_error,
+            use_loading=False, # 不启动加载动画，只用自定义的“配置更新中...”文案
+        )
 
     def on_image_source_changed(self):
         """镜像来源切换时，更新自定义镜像列表与实例配置按钮状态"""
