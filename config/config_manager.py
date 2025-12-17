@@ -202,3 +202,97 @@ def save_instance_config(default_cpu, default_memory, default_region, default_zo
     return save_config(config)
 
 
+
+
+
+def get_instance_config():
+
+    """获取实例默认配置"""
+
+    config = load_config()
+
+    return config.get("instance", {})
+
+
+
+
+
+def save_instance_config(default_cpu, default_memory, default_region, default_zone, default_image_id, default_password, default_disk_type="CLOUD_PREMIUM", default_disk_size=50, default_bandwidth=10, default_bandwidth_charge="TRAFFIC_POSTPAID_BY_HOUR"):
+
+    """保存实例默认配置（落库）"""
+    config = load_config()
+
+    config["instance"] = {
+
+        "default_cpu": default_cpu,
+
+        "default_memory": default_memory,
+
+        "default_region": default_region,
+
+        "default_zone": default_zone,
+
+        "default_image_id": default_image_id,
+
+        "default_password": default_password,
+
+        "default_disk_type": default_disk_type,
+
+        "default_disk_size": default_disk_size,
+
+        "default_bandwidth": default_bandwidth,
+
+        "default_bandwidth_charge": default_bandwidth_charge
+
+    }
+
+    return save_config(config)
+
+
+
+
+
+def get_instance_config():
+
+    """获取实例默认配置"""
+
+    config = load_config()
+
+    return config.get("instance", {})
+
+
+
+
+
+def save_instance_config(default_cpu, default_memory, default_region, default_zone, default_image_id, default_password, default_disk_type="CLOUD_PREMIUM", default_disk_size=50, default_bandwidth=10, default_bandwidth_charge="TRAFFIC_POSTPAID_BY_HOUR"):
+
+    """保存实例默认配置（落库）"""
+    config = load_config()
+
+    config["instance"] = {
+
+        "default_cpu": default_cpu,
+
+        "default_memory": default_memory,
+
+        "default_region": default_region,
+
+        "default_zone": default_zone,
+
+        "default_image_id": default_image_id,
+
+        "default_password": default_password,
+
+        "default_disk_type": default_disk_type,
+
+        "default_disk_size": default_disk_size,
+
+        "default_bandwidth": default_bandwidth,
+
+        "default_bandwidth_charge": default_bandwidth_charge
+
+    }
+
+    return save_config(config)
+
+

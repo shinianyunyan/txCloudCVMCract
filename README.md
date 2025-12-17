@@ -17,11 +17,11 @@
 - **日志与提示**：界面消息提示，`cvm_manager.log` 记录关键操作
 
 ## 主要功能界面
-![mainWindow](./mainWindow.jpg)
-![mainWindow2](./mainwindow2.jpg)
-![setting](./setting.jpg)
-![crearing](./creating.jpg)
-![runCommand](./runCommand.jpg)
+![mainWindow](./images/mainWindow.jpg)
+![mainWindow2](./images/mainwindow2.jpg)
+![setting](./images/setting.jpg)
+![crearing](./images/creating.jpg)
+![runCommand](./images/runCommand.jpg)
 
 ## 环境要求
 - Python 3.8+（推荐 3.10+）
