@@ -17,11 +17,11 @@
 - **日志与提示**：界面消息提示，`cvm_manager.log` 记录关键操作
 
 ## 主要功能界面
-![mainWindow](./images/mainWindow.jpg)
-![mainWindow2](./images/mainwindow2.jpg)
-![setting](./images/setting.jpg)
-![crearing](./images/creating.jpg)
-![runCommand](./images/runCommand.jpg)
+![mainWindow](https://github.com/shinianyunyan/txCloudCVMCract/blob/master/images/mainWindow.jpg)
+![mainWindow2](https://github.com/shinianyunyan/txCloudCVMCract/blob/master/images/mainwindow2.jpg)
+![setting](https://github.com/shinianyunyan/txCloudCVMCract/blob/master/images/setting.jpg)
+![crearing](https://github.com/shinianyunyan/txCloudCVMCract/blob/master/images/creating.jpg)
+![runCommand](https://github.com/shinianyunyan/txCloudCVMCract/blob/master/images/runCommand.jpg)
 
 ## 环境要求
 - Python 3.8+（推荐 3.10+）
@@ -172,5 +172,4 @@ txCloudCVMCract/
 
 ## 许可证
 MIT
-
 
