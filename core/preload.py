@@ -58,7 +58,12 @@ def preload_reference_data():
         return
 
     def load_region_data(region_info):
-        """单个线程处理一个区域：查询可用区和镜像"""
+        """单个线程处理一个区域：查询可用区和镜像。
+
+        为了减轻对 UI 与网络的冲击，这里做了两点控制：
+            - 降低单次并发量（在线程池配置中限制 max_workers）。
+            - 降低单次镜像拉取数量（每区域最多 60 条），但仍满足实例配置界面使用。
+        """
         region_id = region_info.get("Region") or region_info.get("region")
         if not region_id:
             return None
@@ -81,9 +86,9 @@ def preload_reference_data():
             logger.error(f"预加载警告：区域 {region_id} 可用区同步失败（{exc}）")
             result["error"] = f"可用区失败: {str(exc)}"
 
-        # 查询镜像
+        # 查询镜像（限制返回数量，避免一次性加载过多数据导致卡顿）
         try:
-            images = thread_manager.get_images("PUBLIC_IMAGE", limit=100)
+            images = thread_manager.get_images("PUBLIC_IMAGE", limit=60)
             db.replace_images(region_id, "PUBLIC_IMAGE", images)
             result["images"] = len(images) if images else 0
         except Exception as exc:
@@ -95,9 +100,10 @@ def preload_reference_data():
 
         return result
 
-    # 使用线程池并发处理各区域（最多10个线程）
-    logger.info(f"开始并发预加载 {len(regions)} 个区域的数据...")
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    # 使用线程池并发处理各区域：适当降低并发线程数，减小对 UI 的整体压力
+    max_workers = min(4, max(1, len(regions)))
+    logger.info(f"开始并发预加载 {len(regions)} 个区域的数据（线程数: {max_workers}）...")
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(load_region_data, region): region for region in regions or []}
         completed = 0
         for future in as_completed(futures):

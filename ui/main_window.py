@@ -1594,8 +1594,11 @@ class MainWindow(QWidget):
             # 是否是“更新配置”操作（由对话框中的按钮触发）
             is_updating_config = getattr(dialog, 'is_updating_config', False)
             if is_updating_config:
-                # 发起异步配置更新：刷新区域/可用区/镜像等参考数据
+                # 先立即反馈给用户：弹出消息 + 更新状态栏，然后再启动后台更新任务
                 self.show_message("已发起配置更新，请稍候...", "info", 3000)
+                self._set_status_text(
+                    '<span style="font-weight: bold; color: #f57c00;">配置更新中...</span> | 正在刷新区域、可用区与镜像信息'
+                )
                 self._start_reference_update()
             elif dialog.result() == QDialog.Accepted:
                 # 正常保存实例配置
@@ -1632,11 +1635,6 @@ class MainWindow(QWidget):
         self.is_reference_updating = True
         # 在更新期间以及结束后的一小段时间内，禁止创建实例
         self.block_creates_until = float("inf")
-
-        # 更新状态栏文案为“配置更新中...”
-        self._set_status_text(
-            '<span style="font-weight: bold; color: #f57c00;">配置更新中...</span> | 正在刷新区域、可用区与镜像信息'
-        )
 
         def on_done(_result):
             # 更新完成后解除“更新中”标记，并设置短暂保护期，避免积压点击触发创建
