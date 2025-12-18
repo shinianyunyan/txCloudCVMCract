@@ -1,6 +1,6 @@
 # 腾讯云 CVM 实例管理工具
 
-基于腾讯云 APIv3.0 的桌面图形工具，支持批量管理与创建 CVM 实例（公共镜像/自定义镜像）。
+基于腾讯云 API v3 的桌面图形工具，用于管理和批量创建 CVM 实例（公共镜像 / 自定义镜像）。
 
 ## 主要功能
 - **实例创建**：公共镜像（用实例配置中的镜像 ID）或自定义镜像（自动拉取账号下私有镜像列表）
@@ -26,15 +26,16 @@
 ## 环境要求
 - Python 3.8+（推荐 3.10+）
 - 腾讯云账号与 API 密钥（SecretId、SecretKey）
-- 依赖：PyQt5、tencentcloud-sdk-python 等（见 `requirements.txt`）
+- 依赖：PyQt5、tencentcloud-sdk-python、requests（见 `requirements.txt`）
+- Go 1.20+：用于构建本地预加载服务，负责区域 / 可用区 / 公共镜像 / 实例列表全量同步到本地 SQLite
 
 ## 安装
 ```bash
 pip install -r requirements.txt
 ```
 
-## 配置API凭证与默认参数
-- 方式一：首次启动会生成/校验配置文件，可在“设置”中添加相关凭据并保存
+## 配置 API 凭证与默认参数
+- 方式一：首次启动后，在界面中的「设置」里填写并保存 API 凭证
 - 方式二：使用环境变量
   - Windows PowerShell: `set TENCENT_SECRET_ID=xxx`，`set TENCENT_SECRET_KEY=xxx`
   - Linux/macOS: `export TENCENT_SECRET_ID=xxx`，`export TENCENT_SECRET_KEY=xxx`
@@ -44,25 +45,69 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## 界面操作要点
-- **设置**：录入 API 凭证
-- **实例配置**：设置默认 CPU/内存/区域/公共镜像 ID/密码
-  - 支持"更新配置信息"功能，可刷新区域、可用区、镜像数据
-- **镜像来源选择**：公共镜像（用实例配置镜像）或自定义镜像（从账号私有镜像列表选择，选择后实例配置按钮会禁用）
-- **刷新**：拉取实例列表
-- **创建实例**：按当前镜像来源和数量创建；无可用镜像时按钮会禁用
-- **批量操作**：
-  - **批量开机**：自动过滤已运行实例，仅对需要开机的实例执行操作
-  - **批量关机**：自动过滤已停止实例，仅对需要关机的实例执行操作
-  - **批量销毁**：销毁选中的实例
-  - **批量重置密码**：运行中实例会强制关机，重置完成后自动开机；关机实例仅重置密码
-  - **下发指令**：
-    - 选择需要下发指令的实例（必须为同一操作系统类型）
-    - 在对话框中输入指令内容，或点击"选择文件"从本地文件读取
-    - 支持 Linux（SHELL）和 Windows（POWERSHELL）命令
-    - 系统自动识别实例类型并设置相应的命令类型和工作目录
+启动流程说明：
+- 程序启动后会先显示一个加载窗口（Splash），然后执行：
+  - 尝试启动或连接本地 Go 预加载服务（`go_preload/go_preload_server.exe`）；
+  - 由 Go 服务拉取「区域 / 可用区 / 公共镜像 / 实例列表」，并写入本地 SQLite 缓存库；
+- Go 预加载成功：关闭加载窗口，主界面从 SQLite 中读取最新数据；
+- Go 预加载失败（未编译、未找到或调用失败）：
+  - 启动不会中断，加载窗口会提示“预加载失败，将使用缓存数据”；
+  - 主界面仍然可以打开，并**只使用现有 SQLite 缓存**（如果是第一次启动且没有缓存，则相关列表为空）；
+  - 此时启动预加载 / 手动点击「更新配置」不会再由 Python 直接访问腾讯云，只读取旧缓存。
 
-## Python 代码示例
+## Go 预加载服务
+
+本项目内置一个基于 Go 的 HTTP 服务，用来接管以下「高负载、IO 密集」的工作：
+
+- 高并发调用腾讯云 CVM API：`DescribeRegions` / `DescribeZones` / `DescribeImages` / `DescribeInstances`
+- 直接写入本地 SQLite 数据库（`data/cvm_cache.db`，启用 WAL 模式和合理的 busy_timeout）
+- 提供 HTTP 接口给 Python 侧调用：
+  - `/health`：健康检查
+  - `/preload_all`：一次性同步区域/可用区/镜像/实例到 SQLite
+
+Python 侧此时只负责：
+- 在启动时或手动点击「更新配置」时，通过 HTTP 触发 Go 服务的 `/preload_all`
+- 从本地 SQLite 中读取区域 / 可用区 / 公共镜像 / 实例列表并刷新 UI
+- 实例的创建 / 开关机 / 销毁 / 重置密码 / 下发指令等操作仍由 Python 直接调用腾讯云 SDK 完成（不依赖 Go）
+
+### 构建 Go 预加载服务
+
+前提：已安装 Go 1.20+，并在命令行中可执行 `go`。
+
+```bash
+cd go_preload
+go build -o go_preload_server.exe main.go
+```
+
+成功后会在 `go_preload/` 下生成 `go_preload_server.exe`，Python 在启动时会自动检测并按需拉起该服务。
+
+> **没有 Go 服务时的行为总结：**
+> - 程序可以正常启动，主界面也能打开；
+> - 只要本地已有 `data/cvm_cache.db`，界面就会使用其中的缓存数据；
+> - 启动预加载 / 手动点击「更新配置」不会回退到 Python 访问腾讯云，因此不会刷新为最新配置，只能看到旧数据；
+> - 实例的创建 / 开机 / 关机 / 销毁 / 重置密码 / 下发指令等功能仍可使用，它们直接调用腾讯云 SDK，不依赖 Go 服务。
+
+## 界面操作要点
+- **设置**：录入并保存 API 凭证（必填，否则无法正常调用腾讯云接口）
+- **实例配置**：设置创建实例时使用的默认参数（CPU / 内存 / 区域 / 公共镜像 ID / 密码 等）
+  - 提供「更新配置信息」按钮，用于刷新区域 / 可用区 / 公共镜像缓存
+- **镜像来源**：
+  - 公共镜像：从配置的公共镜像 ID 创建实例；
+  - 自定义镜像：从账号的私有镜像列表中选择，选中后实例配置中的镜像选项不再生效；
+- **刷新**：从本地 SQLite 缓存读取实例列表并更新界面
+- **创建实例**：按当前镜像来源和数量创建实例；如果缺少必要配置（如密码）按钮会处于禁用状态
+- **批量操作**：
+  - **批量开机**：对选中且当前处于关机状态的实例发起开机；
+  - **批量关机**：对选中且当前处于运行状态的实例发起关机；
+  - **批量销毁**：销毁选中的实例；
+  - **批量重置密码**：运行中实例会先关机，重置完成后自动开机；已关机实例仅重置密码；
+  - **下发指令**：
+    - 选中需要执行指令的实例（必须是同一操作系统类型）；
+    - 在对话框中输入指令内容或从本地文件读取；
+    - 支持 Linux（SHELL）和 Windows（POWERSHELL）命令；
+    - 程序会根据实例类型设置命令类型和工作目录。
+
+## Python 代码示例（仅供二次开发参考）
 ```python
 from core.cvm_manager import CVMManager
 
@@ -134,11 +179,17 @@ manager.terminate(ids)
 txCloudCVMCract/
 ├── README.md
 ├── requirements.txt
-├── main.py                  # 启动 GUI，预加载区域/可用区/镜像数据
+├── main.py                  # 启动 GUI，显示加载窗口并通过 Go 预加载基础数据
 ├── config/
 │   └── config_manager.py    # 读取/保存默认参数与凭证
 ├── core/
-│   └── cvm_manager.py       # 核心 API 封装（CVM + TAT）
+│   ├── cvm_manager.py       # 核心 API 封装（CVM + TAT）
+│   └── preload.py           # 预加载入口，仅负责调用本地 Go 预加载服务
+├── go_preload/              # Go 预加载服务（高并发拉取 + 写 SQLite）
+│   ├── main.go
+│   ├── go.mod
+│   ├── go.sum
+│   └── go_preload_server.exe（构建后生成）
 ├── ui/
 │   ├── app.py               # 主应用窗口
 │   ├── main_window.py       # 主界面逻辑

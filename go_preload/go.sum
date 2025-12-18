@@ -1,0 +1,7 @@
+github.com/mattn/go-sqlite3 v1.14.32 h1:JD12Ag3oLy1zQA+BNn74xRgaBbdhbNIDYvQUEuuErjs=
+github.com/mattn/go-sqlite3 v1.14.32/go.mod h1:Uh1q+B4BYcTPb+yiD3kU8Ct7aC0hY9fxUwlHK0RXw+Y=
+github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.2/go.mod h1:r5r4xbfxSaeR04b166HGsBa/R4U3SueirEUpXGuw+Q0=
+github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.13 h1:jB/0fwy3k35sshktv7MZ4H7lNLlzBDM7rj+QuK1Rvl0=
+github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.13/go.mod h1:r5r4xbfxSaeR04b166HGsBa/R4U3SueirEUpXGuw+Q0=
+github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm v1.3.2 h1:kjxQJEhRfa9CXJpWrIgiegffMeH8Bb9UTQGaw2DV378=
+github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm v1.3.2/go.mod h1:kSfEkvqlf0hN4onQ3+kML31/pV4knNO3vp+2SPvxdGE=

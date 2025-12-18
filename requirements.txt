@@ -7,3 +7,6 @@ tencentcloud-sdk-python>=3.0.0
 PyQt5>=5.15.0
 PyQt5-Qt5>=5.15.0
 PyQt5-sip>=12.15.0
+
+# HTTP 客户端（用于调用本地 Go 预加载服务等）
+requests>=2.20.0

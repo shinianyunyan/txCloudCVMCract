@@ -6,7 +6,7 @@
     - 负责实例创建、启动、关机、销毁、密码重置等交互逻辑。
     - 统一触发顶部消息条，反馈成功或异常信息。
 """
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox, QGroupBox, QFrame, QMainWindow, QSpinBox, QDialog, QComboBox
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox, QGroupBox, QFrame, QMainWindow, QSpinBox, QDialog, QComboBox, QApplication
 from PyQt5.QtCore import Qt, QTimer
 from core.preload import preload_reference_data
 import time
@@ -69,6 +69,27 @@ class MainWindow(QWidget):
         self.custom_images = []  # 缓存自定义镜像列表
         self.init_ui()
         self.auto_refresh_on_start()
+
+    def _set_reference_update_loading(self, loading: bool):
+        """
+        控制“配置更新中”时的软 loading 状态：
+            - 禁用/启用主要操作按钮，避免误操作。
+            - 不直接覆写状态栏文案，由调用方决定具体文案。
+        """
+        controls = [
+            getattr(self, "btn_refresh", None),
+            getattr(self, "btn_create", None),
+            getattr(self, "btn_instance_config", None),
+            getattr(self, "btn_settings", None),
+            getattr(self, "btn_start", None),
+            getattr(self, "btn_stop", None),
+            getattr(self, "btn_terminate", None),
+            getattr(self, "btn_reset_pwd", None),
+            getattr(self, "btn_send_command", None),
+        ]
+        for w in controls:
+            if w is not None:
+                w.setEnabled(not loading)
     
     def init_ui(self):
         """
@@ -310,7 +331,7 @@ class MainWindow(QWidget):
         """启动时自动刷新实例列表"""
         api_config = get_api_config() if get_api_config else {}
         if api_config.get("secret_id") and api_config.get("secret_key"):
-            # 先同步一次并展示
+            # 先同步一次（异步拉远端），完成后自动刷新展示
             self.refresh_instances(silent=True)
             # 开启定时：1分钟远端同步，4秒本地轮询
             if not self.refresh_timer.isActive():
@@ -318,58 +339,8 @@ class MainWindow(QWidget):
             if not self.db_poll_timer.isActive():
                 self.db_poll_timer.start()
     
-    def refresh_instances(self, silent=False, sync_only=False, skip_sync=False):
-        """
-        刷新实例列表。
-        sync_only: 只拉取远端到本地，不更新UI。
-        skip_sync: 跳过远端调用，直接读本地。
-        """
-        if not CVM_MANAGER_AVAILABLE:
-            if self.refresh_timer.isActive():
-                self.refresh_timer.stop()
-            if not silent:
-                self.show_message("请先安装依赖：pip install -r requirements.txt", "error", 5000)
-            return
-        
-        if not self.cvm_manager:
-            api_config = get_api_config() if get_api_config else {}
-            secret_id = api_config.get("secret_id")
-            secret_key = api_config.get("secret_key")
-            if not secret_id or not secret_key:
-                if self.refresh_timer.isActive():
-                    self.refresh_timer.stop()
-                if not silent:
-                    self.show_message("请先配置API凭证", "warning", 5000)
-                return
-            try:
-                self.cvm_manager = CVMManager(secret_id, secret_key, None)
-            except Exception as e:
-                if self.refresh_timer.isActive():
-                    self.refresh_timer.stop()
-                if not silent:
-                    self.show_message(f"无法初始化CVM管理器: {str(e)}", "error", 5000)
-                return
-            # 刷新自定义镜像列表（在首次成功初始化后）
-            self.load_custom_images()
-            self.refresh_image_selection()
-    
-        # 同步远端到本地库
-        if not skip_sync:
-            try:
-                # 与预加载逻辑保持一致：先标记所有实例为-1，然后查询API
-                # 存在的实例会通过upsert更新status，去掉-1标识
-                # 不存在的实例会保持-1状态（通过soft_delete_missing处理）
-                db = get_db()
-                db.mark_all_instances_as_deleted()
-                self.cvm_manager.get_instances(None)
-            except Exception as e:
-                if not silent:
-                    self.show_message(f"无法同步实例列表: {str(e)}，将使用本地缓存", "warning", 5000)
-        
-        if sync_only:
-            return
-        
-        # 从本地库读取展示
+    def _update_instances_from_db(self, silent: bool = False):
+        """从本地数据库读取实例并刷新列表 + 统计信息（仅做轻量级 UI 操作）"""
         db = get_db()
         raw_instances = db.list_instances()
         from config.config_manager import get_instance_config
@@ -392,39 +363,168 @@ class MainWindow(QWidget):
                 "IpAddress": row.get("public_ip") or row.get("private_ip") or "",
                 "Password": pwd
             })
-        
+
         self.instance_list.update_instances(instances)
         self.update_stats(instances)
         if self.parent():
             self.parent().statusBar().showMessage(f"已加载 {len(instances)} 个实例", 3000)
         if not silent:
             self.show_message(f"成功刷新，共{len(instances)}个实例", "success", 2000)
-        # 定时器已在构造处设置间隔，保持运行
+
+    def refresh_instances(self, silent=False, sync_only=False, skip_sync=False):
+        """
+        刷新实例列表。
+        sync_only: 只拉取远端到本地，不更新UI。
+        skip_sync: 跳过远端调用，直接读本地。
+        说明：
+            - 所有“远端 API + 大批写库”的重活都放到后台线程执行。
+            - 主线程只做本地 DB 读取 + UI 更新，避免阻塞界面。
+        """
+        if not CVM_MANAGER_AVAILABLE:
+            if self.refresh_timer.isActive():
+                self.refresh_timer.stop()
+            if not silent:
+                self.show_message("请先安装依赖：pip install -r requirements.txt", "error", 5000)
+            return
+
+        if not self.cvm_manager:
+            api_config = get_api_config() if get_api_config else {}
+            secret_id = api_config.get("secret_id")
+            secret_key = api_config.get("secret_key")
+            if not secret_id or not secret_key:
+                if self.refresh_timer.isActive():
+                    self.refresh_timer.stop()
+                if not silent:
+                    self.show_message("请先配置API凭证", "warning", 5000)
+                return
+            try:
+                self.cvm_manager = CVMManager(secret_id, secret_key, None)
+            except Exception as e:
+                if self.refresh_timer.isActive():
+                    self.refresh_timer.stop()
+                if not silent:
+                    self.show_message(f"无法初始化CVM管理器: {str(e)}", "error", 5000)
+                return
+            # 刷新自定义镜像列表（在首次成功初始化后）
+            self.load_custom_images()
+            self.refresh_image_selection()
+
+        # 仅从本地库读数据并刷新 UI，不做远端同步（轻量，直接在主线程执行）
+        if skip_sync:
+            self._update_instances_from_db(silent=silent)
+            return
+
+        # 需要远端同步：将“标记删除 + 拉全量实例”的重活丢到后台线程
+        def sync_task():
+            """
+            后台任务：
+                - 标记所有实例为删除状态（-1）。
+                - 调用腾讯云 API 拉取最新实例列表，写入本地 SQLite。
+            """
+            db = get_db()
+            db.mark_all_instances_as_deleted()
+            # 与原实现一致：None 表示拉取当前区域的所有实例
+            self.cvm_manager.get_instances(None)
+            return None
+
+        from utils.utils import setup_logger
+        logger = setup_logger()
+
+        def on_done(_result):
+            # 同步完成后，如果只要求“同步不更新 UI”，直接返回
+            if sync_only:
+                return
+            # 否则从本地库读取并刷新界面
+            self._update_instances_from_db(silent=silent)
+
+        def on_error(msg):
+            # 远端同步失败，提示用户并继续使用本地缓存
+            logger.warning(f"无法同步实例列表: {msg}，将使用本地缓存")
+            if not silent:
+                self.show_message(f"无法同步实例列表: {msg}，将使用本地缓存", "warning", 5000)
+            # 使用现有本地数据刷新 UI
+            if not sync_only:
+                self._update_instances_from_db(silent=silent)
+
+        main_app = self.window()
+        if hasattr(main_app, "run_in_background"):
+            main_app.run_in_background(
+                sync_task,
+                callback=on_done,
+                auto_stop=False,
+                err_callback=on_error,
+                use_loading=False,
+            )
+        else:
+            # 回退方案：在当前线程执行（行为与旧版一致，可能阻塞 UI）
+            try:
+                sync_task()
+            except Exception as e:
+                on_error(str(e))
+                return
+            on_done(None)
     
     def _poll_pending_instances(self):
-        """轮询新创建实例状态/IP、开机中实例状态、关机中实例状态和指令执行状态，每2s查询一次，达成条件即停止监控"""
+        """轮询新创建/开关机中实例状态以及指令执行状态，每2s查询一次，达成条件即停止监控。
+
+        说明：
+            - 重的网络请求全部放在后台线程执行。
+            - 主线程只负责更新本地状态集合 + 刷新 UI。
+        """
+        from utils.utils import setup_logger
+        logger = setup_logger()
+
         has_pending = bool(self.pending_instance_ids)
         has_starting = bool(self.starting_instance_ids)
         has_stopping = bool(self.stopping_instance_ids)
         has_executing = bool(self.executing_invocation_ids)
-        
+
         if not has_pending and not has_starting and not has_stopping and not has_executing:
             if self.pending_poll_timer.isActive():
                 self.pending_poll_timer.stop()
             return
-        
+
         if not self.cvm_manager:
             return
-        
-        try:
+
+        # 在主线程中快照当前需要监控的 ID，避免与 UI 修改产生竞争
+        pending_ids = list(self.pending_instance_ids)
+        starting_ids = list(self.starting_instance_ids)
+        stopping_ids = list(self.stopping_instance_ids)
+        executing_ids = list(self.executing_invocation_ids)
+
+        def poll_task():
+            """后台任务：查询实例与指令执行状态"""
             # 合并所有需要监控的实例ID
-            all_ids = list(self.pending_instance_ids | self.starting_instance_ids | self.stopping_instance_ids)
-            instances = self.cvm_manager.get_instances(None, all_ids)
-            
+            all_ids = list(set(pending_ids) | set(starting_ids) | set(stopping_ids))
+            instances = []
+            if all_ids:
+                instances = self.cvm_manager.get_instances(None, all_ids) or []
+
+            inv_results = {}
+            for invocation_id in executing_ids:
+                try:
+                    result = self.cvm_manager.describe_invocation_tasks(invocation_id=invocation_id) or {}
+                    inv_results[invocation_id] = result
+                except Exception as e:
+                    logger.warning(f"查询执行任务状态失败: {e}")
+            return {
+                "instances": instances,
+                "inv_results": inv_results,
+                "pending_ids": pending_ids,
+                "starting_ids": starting_ids,
+                "stopping_ids": stopping_ids,
+                "executing_ids": executing_ids,
+            }
+
+        def on_done(data):
+            instances = data.get("instances") or []
+            inv_results = data.get("inv_results") or {}
+
             # 处理创建中的实例（等待 RUNNING 或 IP）
             if has_pending:
                 pending_completed = set()
-                for inst in instances or []:
+                for inst in instances:
                     instance_id = inst.get("InstanceId")
                     if instance_id in self.pending_instance_ids:
                         state = inst.get("InstanceState")
@@ -432,78 +532,102 @@ class MainWindow(QWidget):
                         if state == "RUNNING" or ip:
                             pending_completed.add(instance_id)
                 self.pending_instance_ids.difference_update(pending_completed)
-            
+
             # 处理开机中的实例（等待 RUNNING）
             if has_starting:
                 starting_completed = set()
-                for inst in instances or []:
+                for inst in instances:
                     instance_id = inst.get("InstanceId")
                     if instance_id in self.starting_instance_ids:
                         state = inst.get("InstanceState")
                         if state == "RUNNING":
                             starting_completed.add(instance_id)
                 self.starting_instance_ids.difference_update(starting_completed)
-            
+
             # 处理关机中的实例（等待 STOPPED）
             if has_stopping:
                 stopping_completed = set()
-                for inst in instances or []:
+                for inst in instances:
                     instance_id = inst.get("InstanceId")
                     if instance_id in self.stopping_instance_ids:
                         state = inst.get("InstanceState")
                         if state == "STOPPED":
                             stopping_completed.add(instance_id)
                 self.stopping_instance_ids.difference_update(stopping_completed)
-            
+
             # 处理指令执行中的任务（查询执行任务状态）
             if has_executing:
                 executing_completed = set()
-                for invocation_id in list(self.executing_invocation_ids):
-                    try:
-                        result = self.cvm_manager.describe_invocation_tasks(invocation_id=invocation_id)
-                        tasks = result.get("InvocationTaskSet", [])
-                        # 检查所有任务是否都已完成（SUCCESS或FAILED）
-                        all_completed = True
-                        for task in tasks:
-                            status = task.get("TaskStatus", "")
-                            if status not in ["SUCCESS", "FAILED"]:
-                                all_completed = False
-                                break
-                        if all_completed and tasks:
-                            executing_completed.add(invocation_id)
-                    except Exception as e:
-                        logger = setup_logger()
-                        logger.warning(f"查询执行任务状态失败: {e}")
+                for invocation_id, result in inv_results.items():
+                    tasks = result.get("InvocationTaskSet", [])
+                    # 检查所有任务是否都已完成（SUCCESS或FAILED）
+                    all_completed = True
+                    for task in tasks:
+                        status = task.get("TaskStatus", "")
+                        if status not in ["SUCCESS", "FAILED"]:
+                            all_completed = False
+                            break
+                    if all_completed and tasks:
+                        executing_completed.add(invocation_id)
                 self.executing_invocation_ids.difference_update(executing_completed)
-                
+
                 # 如果所有指令都执行完成，更新状态栏
                 if not self.executing_invocation_ids:
                     self._set_status_text('<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 指令执行完成')
-            
+
             # 刷新本地展示（跳过同步，避免额外 API）
             self.refresh_instances(silent=True, skip_sync=True)
-            
+
             # 如果所有监控都完成了，停止定时器
-            if not self.pending_instance_ids and not self.starting_instance_ids and not self.stopping_instance_ids and not self.executing_invocation_ids and self.pending_poll_timer.isActive():
+            if (not self.pending_instance_ids
+                and not self.starting_instance_ids
+                and not self.stopping_instance_ids
+                and not self.executing_invocation_ids
+                and self.pending_poll_timer.isActive()):
                 self.pending_poll_timer.stop()
-        except Exception as e:
-            from utils.utils import setup_logger
-            logger = setup_logger()
-            logger.error(f"轮询状态失败: {e}")
-            self.show_message(f"轮询实例状态失败: {str(e)}", "warning", 3000)
+
+        def on_error(msg):
+            logger.error(f"轮询状态失败: {msg}")
+            self.show_message(f"轮询实例状态失败: {str(msg)}", "warning", 3000)
+
+        main_app = self.window()
+        if hasattr(main_app, "run_in_background"):
+            main_app.run_in_background(
+                poll_task,
+                callback=on_done,
+                auto_stop=False,
+                err_callback=on_error,
+                use_loading=False,
+            )
+        else:
+            # 回退方案：在当前线程执行（行为与旧版一致，可能阻塞 UI）
+            try:
+                data = poll_task()
+            except Exception as e:
+                on_error(str(e))
+                return
+            on_done(data)
 
     def _set_status_text(self, rich_text: str):
         """更新主窗口状态栏文本"""
         main_app = self.window()
         if main_app and hasattr(main_app, "status_label"):
             main_app.status_label.setText(rich_text)
+
+    def _is_action_blocked_by_update(self) -> bool:
+        """
+        判断当前是否因为“配置更新中”而暂时禁止发起云端操作。
+        若被禁止，静默丢弃本次操作，不打断用户。
+        """
+        now_ts = time.time()
+        if getattr(self, "is_reference_updating", False) or now_ts < getattr(self, "block_creates_until", 0.0):
+            return True
+        return False
     
     def create_instances(self):
         """使用配置的参数创建实例"""
-        # 若当前正在更新实例配置信息，或刚刚更新完成（短暂保护期内），禁止创建实例，仅提示用户
-        now_ts = time.time()
-        if getattr(self, "is_reference_updating", False) or now_ts < getattr(self, "block_creates_until", 0.0):
-            self.show_message("实例配置信息更新中，暂时无法创建实例，请稍候完成后再试", "warning", 4000)
+        # 若当前正在更新实例配置信息，或刚刚更新完成（短暂保护期内），统一拦截
+        if self._is_action_blocked_by_update():
             return
         if not CVM_MANAGER_AVAILABLE:
             self.show_message("请先安装依赖：pip install -r requirements.txt", "error", 5000)
@@ -564,6 +688,9 @@ class MainWindow(QWidget):
         # 更新主窗口状态栏为"创建中..."
         self._set_status_text('<span style="font-weight: bold; color: #f57c00;">创建中...</span> | 正在提交创建请求')
         
+        # 强制刷新UI，确保消息和状态栏立即显示
+        QApplication.processEvents()
+        
         # 后台线程执行创建，避免阻塞 UI
         main_app = self.window()
         from utils.utils import setup_logger
@@ -591,6 +718,10 @@ class MainWindow(QWidget):
                 config.get("default_bandwidth", 10),
                 config.get("default_bandwidth_charge", "TRAFFIC_POSTPAID_BY_HOUR")
             )
+        
+        # 延迟启动后台任务，给UI时间显示第一条消息（50ms足够）
+        def start_create_task():
+            main_app.run_in_background(create_task, on_success, auto_stop=True, err_callback=on_error, use_loading=False)
         
         def on_success(result):
             # 获取创建的实例ID列表
@@ -626,8 +757,9 @@ class MainWindow(QWidget):
             if self.pending_instance_ids and not self.pending_poll_timer.isActive():
                 self.pending_poll_timer.start()
             
-            # 立即刷新本地展示（数据库已写入）
-            self.refresh_instances(silent=True, skip_sync=True)
+            # 延迟刷新本地展示，避免阻塞主线程（数据库已写入）
+            # 使用 QTimer.singleShot(100) 延迟刷新，给 UI 时间处理其他事件
+            QTimer.singleShot(100, lambda: self.refresh_instances(silent=True, skip_sync=True))
             
             self._set_status_text('<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 创建完成')
         
@@ -639,8 +771,8 @@ class MainWindow(QWidget):
             self._set_status_text('<span style="font-weight: bold; color: #2e7d32;">就绪</span>')
         
         if hasattr(main_app, "run_in_background"):
-            # 不使用全局 loading 动画，由状态栏“创建中...”提示
-            main_app.run_in_background(create_task, on_success, auto_stop=True, err_callback=on_error, use_loading=False)
+            # 延迟50ms启动后台任务，确保"发起创建"消息先显示
+            QTimer.singleShot(50, start_create_task)
         else:
             # 回退：同步执行（一般不会走到这里）
             try:
@@ -651,6 +783,8 @@ class MainWindow(QWidget):
     
     def batch_start(self):
         """批量开机"""
+        if self._is_action_blocked_by_update():
+            return
         if not self.cvm_manager:
             self.show_message("请先配置并刷新实例列表", "warning", 5000)
             return
@@ -832,6 +966,8 @@ class MainWindow(QWidget):
     
     def batch_stop(self):
         """批量关机"""
+        if self._is_action_blocked_by_update():
+            return
         if not self.cvm_manager:
             self.show_message("请先配置并刷新实例列表", "warning", 5000)
             return
@@ -1194,6 +1330,8 @@ class MainWindow(QWidget):
     
     def batch_terminate(self):
         """批量销毁实例"""
+        if self._is_action_blocked_by_update():
+            return
         if not self.cvm_manager:
             self.show_message("请先配置并刷新实例列表", "warning", 5000)
             return
@@ -1306,6 +1444,8 @@ class MainWindow(QWidget):
     
     def batch_reset_password(self):
         """批量重置密码"""
+        if self._is_action_blocked_by_update():
+            return
         if not self.cvm_manager:
             self.show_message("请先配置并刷新实例列表", "warning", 5000)
             return
@@ -1414,6 +1554,8 @@ class MainWindow(QWidget):
     
     def batch_send_command(self):
         """批量下发指令"""
+        if self._is_action_blocked_by_update():
+            return
         from utils.utils import setup_logger
         logger = setup_logger()
         
@@ -1551,9 +1693,11 @@ class MainWindow(QWidget):
             if CVM_MANAGER_AVAILABLE:
                 # 清空旧管理器实例，确保后续使用最新凭证重新初始化
                 self.cvm_manager = None
-                # 提示用户并触发一次异步的实例配置信息预加载
-                self.show_message("API凭证已更新，正在刷新实例配置信息...", "info", 3000)
-                self._start_reference_update()
+                # 若当前已经在更新配置中，则避免重复触发，仅静默等待本轮完成
+                if not getattr(self, "is_reference_updating", False):
+                    # 提示用户并触发一次异步的实例配置信息预加载
+                    self.show_message("API凭证已更新，正在刷新实例配置信息...", "info", 3000)
+                    self._start_reference_update()
     
     def show_instance_config(self):
         """显示实例配置对话框"""
@@ -1594,11 +1738,7 @@ class MainWindow(QWidget):
             # 是否是“更新配置”操作（由对话框中的按钮触发）
             is_updating_config = getattr(dialog, 'is_updating_config', False)
             if is_updating_config:
-                # 先立即反馈给用户：弹出消息 + 更新状态栏，然后再启动后台更新任务
-                self.show_message("已发起配置更新，请稍候...", "info", 3000)
-                self._set_status_text(
-                    '<span style="font-weight: bold; color: #f57c00;">配置更新中...</span> | 正在刷新区域、可用区与镜像信息'
-                )
+                # 交给统一的异步更新入口处理（包含提示与软 loading）
                 self._start_reference_update()
             elif dialog.result() == QDialog.Accepted:
                 # 正常保存实例配置
@@ -1606,18 +1746,20 @@ class MainWindow(QWidget):
                 # 配置变更后立即同步一次并刷新本地
                 self.refresh_instances(silent=True)
 
-            self.btn_instance_config.setEnabled(True)
+            # 仅在当前不处于“配置更新中”状态时，才重新启用按钮
+            if not getattr(self, "is_reference_updating", False):
+                self.btn_instance_config.setEnabled(True)
         except Exception as e:
             self.show_message(f"打开配置对话框失败: {str(e)}", "error", 5000)
             self.btn_instance_config.setEnabled(True)
 
     def _start_reference_update(self):
         """
-        启动实例配置信息异步更新：
-            - 复用启动阶段的 preload_reference_data 逻辑，刷新区域/可用区/镜像等数据到本地数据库。
-            - 更新期间禁用“创建实例”按钮，并在主窗口状态栏显示“配置更新中”。
-            - 更新完成后提示用户，并恢复按钮与状态栏为“就绪”。
+        启动实例配置信息异步更新
         """
+        # 若已在更新中，则忽略重复请求，避免并行预加载
+        if getattr(self, "is_reference_updating", False):
+            return
         # 获取顶层应用窗口（CVMApp），用于调度后台任务
         app_window = self.window()
 
@@ -1636,36 +1778,57 @@ class MainWindow(QWidget):
         # 在更新期间以及结束后的一小段时间内，禁止创建实例
         self.block_creates_until = float("inf")
 
+        # 进入“配置更新中”软 loading 状态：禁用主要操作按钮
+        self._set_reference_update_loading(True)
+        self._set_status_text(
+            '<span style="font-weight: bold; color: #f57c00;">配置更新中...</span> | 正在从腾讯云同步区域/可用区与镜像信息'
+        )
+        # 立即给用户一个气泡提示
+        self.show_message("已发起配置更新，请稍候...", "info", 3000)
+
+        # 强制刷新UI，确保状态更新立即显示
+        QApplication.processEvents()
+
         def on_done(_result):
-            # 更新完成后解除“更新中”标记，并设置短暂保护期，避免积压点击触发创建
+            # 更新完成后解除"更新中"标记，并设置短暂保护期，避免积压点击触发创建
             self.is_reference_updating = False
             self.block_creates_until = time.time() + 2.0
-            # 恢复状态栏为“就绪”
+            # 退出“配置更新中” loading 状态，恢复按钮可用
+            self._set_reference_update_loading(False)
+            # 恢复状态栏为"就绪"
             self._set_status_text(
                 '<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 实例配置信息已更新'
             )
             # 提示用户更新成功，并刷新实例列表视图
             self.show_message("实例配置信息已更新", "success", 3000)
-            self.refresh_instances(silent=True, sync_only=True)
+            # 延迟刷新实例列表，避免阻塞UI
+            QTimer.singleShot(100, lambda: self.refresh_instances(silent=True, sync_only=True))
 
         def on_error(msg):
-            # 更新失败后解除“更新中”标记，并设置短暂保护期
+            # 更新失败后解除"更新中"标记，并设置短暂保护期
             self.is_reference_updating = False
             self.block_creates_until = time.time() + 2.0
-            # 恢复状态栏为“就绪”（标明失败）
+            # 退出“配置更新中” loading 状态，恢复按钮可用
+            self._set_reference_update_loading(False)
+            # 恢复状态栏为"就绪"（标明失败）
             self._set_status_text(
                 '<span style="font-weight: bold; color: #d32f2f;">就绪</span> | 配置更新失败'
             )
             self.show_message(f"配置更新失败: {msg}", "error", 5000)
 
-        # 使用主窗口提供的通用后台执行器，避免阻塞 UI
-        app_window.run_in_background(
-            preload_reference_data,
-            callback=on_done,
-            auto_stop=False,   # 不使用通用“加载中”文案，保持自定义状态栏文本
-            err_callback=on_error,
-            use_loading=False, # 不启动加载动画，只用自定义的“配置更新中...”文案
-        )
+        # 延迟启动后台任务，确保UI状态已更新
+        def start_update_task():
+            # 使用主窗口提供的通用后台执行器，避免阻塞 UI
+            app_window.run_in_background(
+                preload_reference_data,
+                callback=on_done,
+                auto_stop=False,   # 不使用通用"加载中"文案，保持自定义状态栏文本
+                err_callback=on_error,
+                use_loading=False, # 不启动加载动画，只用自定义的"配置更新中..."文案
+            )
+        
+        # 延迟50ms启动，确保UI状态已更新
+        QTimer.singleShot(50, start_update_task)
 
     def on_image_source_changed(self):
         """镜像来源切换时，更新自定义镜像列表与实例配置按钮状态"""

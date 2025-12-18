@@ -174,82 +174,89 @@ class InstanceList(QTableWidget):
         # 保存当前选中的实例ID列表
         selected_ids = self.get_selected_instance_ids()
         
-        self.setRowCount(0)
+        # 禁用重绘以提高性能，避免 UI 卡顿
+        self.setUpdatesEnabled(False)
         
-        for instance in instances:
-            row = self.rowCount()
-            self.insertRow(row)
+        try:
+            self.setRowCount(0)
             
-            # 选择框（使用复选框，居中显示）
-            checkbox = QTableWidgetItem()
-            checkbox.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-            checkbox.setCheckState(Qt.Unchecked)
-            checkbox.setText("")
-            checkbox.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
-            self.setItem(row, 0, checkbox)
+            for instance in instances:
+                row = self.rowCount()
+                self.insertRow(row)
+                
+                # 选择框（使用复选框，居中显示）
+                checkbox = QTableWidgetItem()
+                checkbox.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+                checkbox.setCheckState(Qt.Unchecked)
+                checkbox.setText("")
+                checkbox.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+                self.setItem(row, 0, checkbox)
+                
+                # 连接复选框状态改变事件，更新表头状态
+                # 注意：QTableWidgetItem 没有直接的信号，我们需要通过 itemChanged 信号来监听
+                
+                # 实例ID
+                self.setItem(row, 1, QTableWidgetItem(instance.get("InstanceId", "")))
+                
+                # 实例名称
+                self.setItem(row, 2, QTableWidgetItem(instance.get("InstanceName", "")))
+                
+                # 状态
+                status = instance.get("InstanceState", "")
+                status_item = QTableWidgetItem(get_instance_status_name(status))
+                # 根据状态设置颜色
+                if status == "RUNNING":
+                    status_item.setForeground(Qt.darkGreen)
+                elif status == "STOPPED":
+                    status_item.setForeground(Qt.darkRed)
+                elif status == "PENDING":
+                    status_item.setForeground(Qt.darkYellow)
+                self.setItem(row, 3, status_item)
+                
+                # IP（带复制功能）
+                ip_address = instance.get("IpAddress", "")
+                ip_widget = self._create_copy_cell(ip_address)
+                self.setCellWidget(row, 4, ip_widget)
+                
+                # 密码（默认隐藏）
+                password = instance.get("Password", "")
+                masked = "*" * len(password) if password else ""
+                pwd_widget = self._create_password_cell(password, masked)
+                self.setCellWidget(row, 5, pwd_widget)
+                
+                # CPU
+                self.setItem(row, 6, QTableWidgetItem(str(instance.get("CPU", ""))))
+                
+                # 内存
+                self.setItem(row, 7, QTableWidgetItem(str(instance.get("Memory", ""))))
+                
+                # 区域
+                region = instance.get("Region", "")
+                self.setItem(row, 8, QTableWidgetItem(f"{region} ({get_region_name(region)})"))
+                
+                # 创建时间
+                created_time = instance.get("CreatedTime", "")
+                self.setItem(row, 9, QTableWidgetItem(str(created_time)))
             
-            # 连接复选框状态改变事件，更新表头状态
-            # 注意：QTableWidgetItem 没有直接的信号，我们需要通过 itemChanged 信号来监听
+            # 恢复之前选中的复选框状态（暂时断开信号避免触发更新）
+            self.itemChanged.disconnect(self._on_item_changed)
+            for row in range(self.rowCount()):
+                instance_id_item = self.item(row, 1)
+                if instance_id_item and instance_id_item.text() in selected_ids:
+                    checkbox = self.item(row, 0)
+                    if checkbox:
+                        checkbox.setCheckState(Qt.Checked)
+            self.itemChanged.connect(self._on_item_changed)
             
-            # 实例ID
-            self.setItem(row, 1, QTableWidgetItem(instance.get("InstanceId", "")))
+            # 确保"选择"列宽度足够（防止被压缩）
+            if self.columnWidth(0) < 80:
+                self.setColumnWidth(0, 80)
             
-            # 实例名称
-            self.setItem(row, 2, QTableWidgetItem(instance.get("InstanceName", "")))
-            
-            # 状态
-            status = instance.get("InstanceState", "")
-            status_item = QTableWidgetItem(get_instance_status_name(status))
-            # 根据状态设置颜色
-            if status == "RUNNING":
-                status_item.setForeground(Qt.darkGreen)
-            elif status == "STOPPED":
-                status_item.setForeground(Qt.darkRed)
-            elif status == "PENDING":
-                status_item.setForeground(Qt.darkYellow)
-            self.setItem(row, 3, status_item)
-            
-            # IP（带复制功能）
-            ip_address = instance.get("IpAddress", "")
-            ip_widget = self._create_copy_cell(ip_address)
-            self.setCellWidget(row, 4, ip_widget)
-            
-            # 密码（默认隐藏）
-            password = instance.get("Password", "")
-            masked = "*" * len(password) if password else ""
-            pwd_widget = self._create_password_cell(password, masked)
-            self.setCellWidget(row, 5, pwd_widget)
-            
-            # CPU
-            self.setItem(row, 6, QTableWidgetItem(str(instance.get("CPU", ""))))
-            
-            # 内存
-            self.setItem(row, 7, QTableWidgetItem(str(instance.get("Memory", ""))))
-            
-            # 区域
-            region = instance.get("Region", "")
-            self.setItem(row, 8, QTableWidgetItem(f"{region} ({get_region_name(region)})"))
-            
-            # 创建时间
-            created_time = instance.get("CreatedTime", "")
-            self.setItem(row, 9, QTableWidgetItem(str(created_time)))
-        
-        # 恢复之前选中的复选框状态（暂时断开信号避免触发更新）
-        self.itemChanged.disconnect(self._on_item_changed)
-        for row in range(self.rowCount()):
-            instance_id_item = self.item(row, 1)
-            if instance_id_item and instance_id_item.text() in selected_ids:
-                checkbox = self.item(row, 0)
-                if checkbox:
-                    checkbox.setCheckState(Qt.Checked)
-        self.itemChanged.connect(self._on_item_changed)
-        
-        # 确保"选择"列宽度足够（防止被压缩）
-        if self.columnWidth(0) < 80:
-            self.setColumnWidth(0, 80)
-        
-        # 更新表头复选框状态
-        self._update_header_checkbox_state()
+            # 更新表头复选框状态
+            self._update_header_checkbox_state()
+        finally:
+            # 恢复重绘，确保 UI 更新
+            self.setUpdatesEnabled(True)
     
     def _create_copy_cell(self, text):
         """创建带复制按钮的 IP 单元格。"""

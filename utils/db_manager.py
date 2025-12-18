@@ -26,8 +26,12 @@ class DBManager:
         self._init_tables()
 
     def _connect(self):
+        # 启用 WAL 模式，提高并发读写性能，减少锁竞争
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        # 设置 WAL 模式和 busy_timeout，减少与 Go 服务的锁竞争
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")  # 5秒超时
         return conn
 
     def _init_tables(self):
@@ -214,26 +218,44 @@ class DBManager:
 
     def list_instances(self) -> List[Dict[str, Any]]:
         """返回未标记删除的实例列表（过滤 status = '-1'）。"""
-        with self._connect() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT instance_id, instance_name, status, region, zone, instance_type, image_id, image_name, platform, cpu, memory, private_ip, public_ip, created_time, expired_time FROM instances WHERE status != '-1' OR status IS NULL ORDER BY updated_at DESC"
-            )
-            rows = cur.fetchall()
-            return [dict(row) for row in rows]
+        # [优化]：UI 线程频繁调用此方法。如果此时后台正在写库（加了锁），
+        # UI 线程不应该等待，而是直接返回空或报错，避免卡死界面。
+        locked = _lock.acquire(blocking=False)
+        if not locked:
+            # 如果拿不到锁，说明后台正在大规模写入，UI 线程直接跳过本次刷新
+            return [] 
+        
+        try:
+            with self._connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT instance_id, instance_name, status, region, zone, instance_type, image_id, image_name, platform, cpu, memory, private_ip, public_ip, created_time, expired_time FROM instances WHERE status != '-1' OR status IS NULL ORDER BY updated_at DESC"
+                )
+                rows = cur.fetchall()
+                return [dict(row) for row in rows]
+        finally:
+            _lock.release()
 
     def get_instances(self, instance_ids: List[str]) -> List[Dict[str, Any]]:
         """按 ID 查询实例记录。"""
         if not instance_ids:
             return []
-        with self._connect() as conn:
-            placeholders = ",".join("?" for _ in instance_ids)
-            cur = conn.cursor()
-            cur.execute(
-                f"SELECT instance_id, instance_name, status, region, zone, instance_type, image_id, image_name, platform, cpu, memory, private_ip, public_ip, created_time, expired_time FROM instances WHERE instance_id IN ({placeholders})",
-                instance_ids,
-            )
-            return [dict(row) for row in cur.fetchall()]
+            
+        locked = _lock.acquire(blocking=False)
+        if not locked:
+            return []
+
+        try:
+            with self._connect() as conn:
+                placeholders = ",".join("?" for _ in instance_ids)
+                cur = conn.cursor()
+                cur.execute(
+                    f"SELECT instance_id, instance_name, status, region, zone, instance_type, image_id, image_name, platform, cpu, memory, private_ip, public_ip, created_time, expired_time FROM instances WHERE instance_id IN ({placeholders})",
+                    instance_ids,
+                )
+                return [dict(row) for row in cur.fetchall()]
+        finally:
+            _lock.release()
 
     # ---------------- 配置结构化存储 ----------------
     def _migrate_config_cache_to_config(self, cur):
@@ -477,6 +499,109 @@ class DBManager:
                     }
                 )
             return result
+
+    def batch_sync_data(self, regions=None, zones_map=None, images_map=None, instances=None):
+        """
+        在一个事务中同步所有云端数据。
+        这是减少磁盘 IO 和锁竞争的最优方案。
+        """
+        with _lock, self._connect() as conn:
+            cur = conn.cursor()
+            
+            # 1. 同步区域
+            if regions:
+                cur.execute("DELETE FROM regions")
+                for r in regions:
+                    cur.execute(
+                        "INSERT INTO regions (region, region_name, region_state, updated_at) VALUES (?, ?, ?, strftime('%s','now'))",
+                        (r.get("Region") or r.get("region"), r.get("RegionName") or r.get("region_name"), r.get("RegionState") or r.get("region_state"))
+                    )
+
+            # 2. 同步可用区
+            if zones_map:
+                # zones_map: {region: [zone_info, ...]}
+                for rid, zones in zones_map.items():
+                    cur.execute("DELETE FROM zones WHERE region = ?", (rid,))
+                    for z in zones or []:
+                        cur.execute(
+                            "INSERT INTO zones (zone, region, zone_name, zone_state, updated_at) VALUES (?, ?, ?, ?, strftime('%s','now'))",
+                            (z.get("Zone") or z.get("zone"), rid, z.get("ZoneName") or z.get("zone_name"), z.get("ZoneState") or z.get("zone_state"))
+                        )
+
+            # 3. 同步镜像
+            if images_map:
+                # images_map: {region: [image_info, ...]}
+                for rid, images in images_map.items():
+                    cur.execute("DELETE FROM images WHERE region = ? AND image_type = ?", (rid, "PUBLIC_IMAGE"))
+                    batch = []
+                    for img in images or []:
+                        batch.append((
+                            img.get("ImageId") or img.get("image_id"),
+                            img.get("ImageName") or img.get("image_name"),
+                            img.get("ImageType") or "PUBLIC_IMAGE",
+                            img.get("Platform") or img.get("platform"),
+                            rid,
+                            img.get("CreatedTime") or img.get("created_time")
+                        ))
+                    if batch:
+                        cur.executemany(
+                            "INSERT INTO images (image_id, image_name, image_type, platform, region, created_time, updated_at) VALUES (?, ?, ?, ?, ?, ?, strftime('%s','now'))",
+                            batch
+                        )
+
+            # 4. 同步实例 (先统一标记删除，再写入/更新)
+            if instances is not None:
+                cur.execute("UPDATE instances SET status='-1', updated_at=strftime('%s','now') WHERE status != '-1'")
+                batch = []
+                for inst in instances:
+                    # 获取 IP 逻辑复用
+                    private_ip = self._first_ip(inst.get("PrivateIpAddresses") or inst.get("private_ip"))
+                    public_ip = self._first_ip(inst.get("PublicIpAddresses") or inst.get("public_ip"))
+                    
+                    batch.append((
+                        inst.get("InstanceId") or inst.get("instance_id"),
+                        inst.get("InstanceName") or inst.get("instance_name"),
+                        inst.get("InstanceState") or inst.get("status"),
+                        inst.get("Region") or inst.get("region"),
+                        inst.get("Zone") or (inst.get("Placement", {}).get("Zone") if isinstance(inst.get("Placement"), dict) else inst.get("zone")),
+                        inst.get("InstanceType") or inst.get("instance_type"),
+                        inst.get("ImageId") or inst.get("image_id"),
+                        inst.get("ImageName") or inst.get("image_name"),
+                        inst.get("Platform") or inst.get("platform"),
+                        inst.get("CPU") or inst.get("cpu"),
+                        inst.get("Memory") or inst.get("memory"),
+                        private_ip,
+                        public_ip,
+                        inst.get("ExpiredTime") or inst.get("expired_time"),
+                        inst.get("CreatedTime") or inst.get("created_time")
+                    ))
+                
+                if batch:
+                    cur.executemany(
+                        """
+                        INSERT INTO instances (instance_id, instance_name, status, region, zone, instance_type, image_id, image_name, platform, cpu, memory, private_ip, public_ip, expired_time, created_time, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s','now'))
+                        ON CONFLICT(instance_id) DO UPDATE SET
+                            instance_name=excluded.instance_name,
+                            status=excluded.status,
+                            region=excluded.region,
+                            zone=excluded.zone,
+                            instance_type=excluded.instance_type,
+                            image_id=excluded.image_id,
+                            image_name=excluded.image_name,
+                            platform=excluded.platform,
+                            cpu=excluded.cpu,
+                            memory=excluded.memory,
+                            private_ip=excluded.private_ip,
+                            public_ip=excluded.public_ip,
+                            expired_time=COALESCE(excluded.expired_time, instances.expired_time),
+                            created_time=COALESCE(instances.created_time, excluded.created_time),
+                            updated_at=strftime('%s','now')
+                        """,
+                        batch
+                    )
+
+            conn.commit()
 
     # ---------------- 工具 ----------------
     @staticmethod

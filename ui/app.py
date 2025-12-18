@@ -113,9 +113,12 @@ class CVMApp(QMainWindow):
         self.setMinimumSize(min_width, min_height)
         
         # 设置窗口图标，兼容旧路径
-        icon_path = os.path.join(os.path.dirname(__file__), "ui", "assets", "logo.ico")
+        base_dir = os.path.dirname(__file__)
+        # 当前推荐路径：ui/assets/logo.ico
+        icon_path = os.path.join(base_dir, "assets", "logo.ico")
+        # 兼容旧版本：ui/logo.ico
         if not os.path.exists(icon_path):
-            icon_path = os.path.join(os.path.dirname(__file__), "ui", "logo.ico")
+            icon_path = os.path.join(base_dir, "logo.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         
