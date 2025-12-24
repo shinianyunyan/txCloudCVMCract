@@ -1,0 +1,15 @@
+# 设置所有文件使用 LF 换行符
+* text=auto eol=lf
+
+# 设置特定二进制文件不转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
