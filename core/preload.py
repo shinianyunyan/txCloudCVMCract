@@ -54,10 +54,11 @@ def _ensure_go_server_running(logger):
         raise RuntimeError(f"Go 服务文件不存在: {exe_path}")
 
     # 3. 启动进程（非阻塞）
+    global _GO_PROC
     logger.info(f"正在后台启动 Go 服务: {exe_path}")
     try:
         # 使用绝对路径和独立的工作目录，解决 WinError 193
-        subprocess.Popen(
+        _GO_PROC = subprocess.Popen(
             [exe_path],
             cwd=os.path.dirname(exe_path),
             stdout=subprocess.DEVNULL,

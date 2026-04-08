@@ -54,6 +54,36 @@ def setup_logger(name: str = "CVM_Manager", log_file: str = "cvm_manager.log", l
     return logger
 
 
+def generate_password(length: int = 16) -> str:
+    """
+    生成符合腾讯云要求的随机复杂密码。
+    保证包含大写、小写、数字、特殊字符各至少 1 个。
+    """
+    import secrets
+    import string
+    
+    upper = string.ascii_uppercase
+    lower = string.ascii_lowercase
+    digits = string.digits
+    special = "!@#$%^&*_+-="
+    
+    # 保证每类至少 1 个
+    pwd = [
+        secrets.choice(upper),
+        secrets.choice(lower),
+        secrets.choice(digits),
+        secrets.choice(special),
+    ]
+    # 剩余用全字符集随机填充
+    all_chars = upper + lower + digits + special
+    pwd += [secrets.choice(all_chars) for _ in range(length - 4)]
+    
+    # 打乱顺序
+    result = list(pwd)
+    secrets.SystemRandom().shuffle(result)
+    return "".join(result)
+
+
 def validate_password(password: str) -> Tuple[bool, str]:
     """
     校验密码是否符合腾讯云要求。

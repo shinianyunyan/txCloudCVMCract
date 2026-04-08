@@ -75,25 +75,60 @@ if __name__ == "__main__":
     splash_widget.show()
     app.processEvents()  # 强制刷新显示
     
-    # 在显示主窗口前完成预加载
+    # 点动画定时器
+    splash_dots = [0]  # 用列表以便在闭包中修改
+    splash_base_text = ["正在初始化，请稍候"]
+    
+    def _update_splash_dots():
+        splash_dots[0] = (splash_dots[0] % 3) + 1
+        splash_label.setText(splash_base_text[0] + "." * splash_dots[0])
+    
+    splash_timer = QTimer()
+    splash_timer.setInterval(350)
+    splash_timer.timeout.connect(_update_splash_dots)
+    splash_timer.start()
+    
+    # 在显示主窗口前完成预加载（使用后台线程，保持动画流畅）
     logger = setup_logger()
     logger.info("启动时预加载配置数据...")
     
-    # 更新加载提示
+    # 更新加载提示（同时更新动画基础文本）
     def update_splash_text(text):
-        splash_label.setText(text)
+        splash_base_text[0] = text
+        splash_dots[0] = 0
+        splash_label.setText(text + ".")
         app.processEvents()
     
-    try:
-        update_splash_text("正在连接 Go 服务...")
-        preload_reference_data()
+    import threading
+    preload_done = threading.Event()
+    preload_error = [None]
+    
+    def _run_preload():
+        try:
+            preload_reference_data()
+        except Exception as e:
+            preload_error[0] = e
+        finally:
+            preload_done.set()
+    
+    update_splash_text("正在连接 Go 服务")
+    preload_thread = threading.Thread(target=_run_preload, daemon=True)
+    preload_thread.start()
+    
+    # 等待预加载完成，同时保持事件循环运转（动画不卡）
+    while not preload_done.is_set():
+        app.processEvents()
+        preload_done.wait(0.05)  # 50ms 间隔，兼顾响应速度和 CPU
+    
+    if preload_error[0]:
+        update_splash_text("预加载失败，将使用缓存数据")
+        logger.warning(f"预加载失败，将使用缓存数据: {preload_error[0]}")
+    else:
         update_splash_text("预加载完成")
         logger.info("预加载完成")
-    except Exception as e:
-        update_splash_text("预加载失败，将使用缓存数据")
-        logger.warning(f"预加载失败，将使用缓存数据: {e}")
     
-    # 短暂延迟后关闭加载窗口，让用户看到完成提示
+    # 停止动画，短暂延迟后关闭加载窗口
+    splash_timer.stop()
     QTimer.singleShot(500, splash_widget.close)
     app.processEvents()
     

@@ -55,6 +55,7 @@ class DBManager:
                     public_ip TEXT,
                     expired_time TEXT,
                     created_time TEXT,
+                    password TEXT,
                     updated_at INTEGER
                 )
                 """
@@ -127,6 +128,8 @@ class DBManager:
                 cur.execute("ALTER TABLE instances ADD COLUMN platform TEXT")
             if "expired_time" not in cols:
                 cur.execute("ALTER TABLE instances ADD COLUMN expired_time TEXT")
+            if "password" not in cols:
+                cur.execute("ALTER TABLE instances ADD COLUMN password TEXT")
             # 配置表迁移：如存在旧 config_cache 记录则迁移至 config 表
             cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='config'")
             has_config_table = cur.fetchone() is not None
@@ -202,6 +205,28 @@ class DBManager:
             )
             conn.commit()
 
+    def set_instance_password(self, instance_id: str, password: str):
+        """设置单个实例的密码。"""
+        with _lock, self._connect() as conn:
+            conn.execute(
+                "UPDATE instances SET password = ?, updated_at = strftime('%s','now') WHERE instance_id = ?",
+                (password, instance_id),
+            )
+            conn.commit()
+
+    def set_instances_password(self, instance_ids: List[str], password: str):
+        """批量设置多个实例的密码。"""
+        if not instance_ids:
+            return
+        with _lock, self._connect() as conn:
+            cur = conn.cursor()
+            for iid in instance_ids:
+                cur.execute(
+                    "UPDATE instances SET password = ?, updated_at = strftime('%s','now') WHERE instance_id = ?",
+                    (password, iid),
+                )
+            conn.commit()
+
     def soft_delete_missing(self, valid_ids: List[str]):
         """将不在有效列表中的实例标记为删除（status = '-1'），避免直接删除记录。"""
         if valid_ids is None:
@@ -229,7 +254,7 @@ class DBManager:
             with self._connect() as conn:
                 cur = conn.cursor()
                 cur.execute(
-                    "SELECT instance_id, instance_name, status, region, zone, instance_type, image_id, image_name, platform, cpu, memory, private_ip, public_ip, created_time, expired_time FROM instances WHERE status != '-1' OR status IS NULL ORDER BY updated_at DESC"
+                    "SELECT instance_id, instance_name, status, region, zone, instance_type, image_id, image_name, platform, cpu, memory, private_ip, public_ip, created_time, expired_time, password FROM instances WHERE status != '-1' OR status IS NULL ORDER BY updated_at DESC"
                 )
                 rows = cur.fetchall()
                 return [dict(row) for row in rows]
@@ -250,7 +275,7 @@ class DBManager:
                 placeholders = ",".join("?" for _ in instance_ids)
                 cur = conn.cursor()
                 cur.execute(
-                    f"SELECT instance_id, instance_name, status, region, zone, instance_type, image_id, image_name, platform, cpu, memory, private_ip, public_ip, created_time, expired_time FROM instances WHERE instance_id IN ({placeholders})",
+                    f"SELECT instance_id, instance_name, status, region, zone, instance_type, image_id, image_name, platform, cpu, memory, private_ip, public_ip, created_time, expired_time, password FROM instances WHERE instance_id IN ({placeholders})",
                     instance_ids,
                 )
                 return [dict(row) for row in cur.fetchall()]

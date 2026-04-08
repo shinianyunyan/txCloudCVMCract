@@ -48,6 +48,7 @@ class InstanceConfigDialog(QDialog):
         # 默认优先展示 Debian 镜像
         self.current_platform = "DEBIAN"
         self.temp_image_file = None
+        self._old_threads = []  # 保存旧线程引用，防止GC在线程运行中销毁
         self.init_ui()
         self.load_from_db()
     
@@ -156,31 +157,10 @@ class InstanceConfigDialog(QDialog):
         self.zone_combo.currentTextChanged.connect(self.update_price)
         form_layout.addRow("可用区:", self.zone_combo)
         
-        # 镜像平台分类（从公共镜像中按 Platform 归类）
-        self.image_platform_combo = QComboBox()
-        self.image_platform_combo.currentIndexChanged.connect(self.on_platform_changed)
-        form_layout.addRow("镜像类型:", self.image_platform_combo)
-        
-        # 镜像选择
-        self.image_combo = QComboBox()
-        self.image_combo.currentTextChanged.connect(self.update_price)
-        form_layout.addRow("镜像:", self.image_combo)
-        
-        # 密码
-        self.password_edit = QLineEdit()
-        self.password_edit.setEchoMode(QLineEdit.Password)
-        self.password_edit.setPlaceholderText("Linux: 8-16位，至少2项；Windows: 12-16位，至少3项")
-        form_layout.addRow("密码:", self.password_edit)
-        
-        # 确认密码
-        self.password_confirm_edit = QLineEdit()
-        self.password_confirm_edit.setEchoMode(QLineEdit.Password)
-        form_layout.addRow("确认密码:", self.password_confirm_edit)
-        
         form_container.addLayout(form_layout)
         
         # 提示
-        tip_label = QLabel("提示：可用区和镜像可以为空，创建实例时会自动选择。密码必须设置。")
+        tip_label = QLabel("提示：可用区和镜像可以为空，创建实例时会自动选择。密码将在创建时自动生成。")
         tip_label.setWordWrap(True)
         tip_label.setStyleSheet("color: #999; font-size: 11px; padding: 5px;")
         form_container.addWidget(tip_label)
@@ -293,11 +273,7 @@ class InstanceConfigDialog(QDialog):
         if idx_charge >= 0:
             self.bandwidth_charge_combo.setCurrentIndex(idx_charge)
         
-        if config.get("default_password"):
-            self.password_edit.setText(config["default_password"])
-            self.password_confirm_edit.setText(config["default_password"])
-        
-        # 加载区域和镜像
+        # 加载区域
         if self.regions_data:
             for region in self.regions_data:
                 if region.get("RegionState") == "AVAILABLE":
@@ -306,23 +282,12 @@ class InstanceConfigDialog(QDialog):
                         region['Region']
                     )
         
-        # 镜像类型下拉（按平台分类）
-        self.populate_platform_combo()
-        # 镜像初始数据（默认按当前平台展示）
-        default_images = self.platform_images.get(self.current_platform, self.all_images)
-        self.populate_image_combo(default_images)
-        
         # 设置已保存的配置
         if config.get("default_region"):
             index = self.region_combo.findData(config["default_region"])
             if index >= 0:
                 self.region_combo.setCurrentIndex(index)
                 self.on_region_changed()
-        
-        if config.get("default_image_id"):
-            index = self.image_combo.findData(config["default_image_id"])
-            if index >= 0:
-                self.image_combo.setCurrentIndex(index)
         
         if config.get("default_zone"):
             index = self.zone_combo.findData(config["default_zone"])
@@ -331,69 +296,6 @@ class InstanceConfigDialog(QDialog):
         
         self.update_price()
     
-    def populate_platform_combo(self):
-        """根据平台分类刷新镜像类型下拉"""
-        self.image_platform_combo.clear()
-        platform_labels = {
-            "WINDOWS": "Windows",
-            "UBUNTU": "Ubuntu",
-            "CENTOS": "CentOS",
-            "DEBIAN": "Debian",
-            "REDHAT": "Redhat",
-            "SUSE": "Suse",
-            "OPENOS": "Openos",
-            "OTHER": "Other"
-        }
-        if self.platform_images:
-            # 将 Other 固定放在最后，其他按原顺序
-            platform_keys = list(self.platform_images.keys())
-            # Debian 优先显示
-            has_debian = "DEBIAN" in platform_keys
-            if has_debian:
-                platform_keys = ["DEBIAN"] + [k for k in platform_keys if k != "DEBIAN"]
-            if "OTHER" in platform_keys:
-                platform_keys = [k for k in platform_keys if k != "OTHER"] + ["OTHER"]
-            for platform_key in platform_keys:
-                images = self.platform_images[platform_key]
-                label = f"{platform_labels.get(platform_key, platform_key.title())} ({len(images)})"
-                self.image_platform_combo.addItem(label, platform_key)
-            default_index = self.image_platform_combo.findData(self.current_platform)
-            if default_index >= 0:
-                self.image_platform_combo.setCurrentIndex(default_index)
-            else:
-                # 如果默认平台不存在，则退回全部镜像
-                self.current_platform = next(iter(self.platform_images.keys()), "OTHER")
-                self.image_platform_combo.setCurrentIndex(0)
-        else:
-            self.image_platform_combo.addItem("无可用镜像", "OTHER")
-            self.current_platform = "OTHER"
-            self.image_combo.clear()
-            self.image_combo.addItem("(自动选择)", None)
-        self.on_platform_changed()
-    
-    def populate_image_combo(self, images):
-        """根据镜像列表刷新镜像下拉"""
-        self.image_combo.clear()
-        self.image_combo.addItem("(自动选择)", None)
-        if images:
-            for image in images:
-                name = image.get("ImageName", "")
-                platform = image.get("Platform", "")
-                self.image_combo.addItem(
-                    f"{name} [{platform}] ({image['ImageId']})",
-                    image["ImageId"]
-                )
-        self.update_price()
-    
-    def on_platform_changed(self):
-        """镜像类型（平台）切换时筛选已拉取的镜像"""
-        platform_key = self.image_platform_combo.currentData()
-        self.current_platform = platform_key
-        if platform_key == "ALL":
-            self.populate_image_combo(self.all_images)
-        else:
-            self.populate_image_combo(self.platform_images.get(platform_key, []))
-
     def _categorize_images(self, images):
         """按平台归类镜像"""
         buckets = {}
@@ -407,12 +309,24 @@ class InstanceConfigDialog(QDialog):
                 key = "CENTOS"
             elif platform.startswith("DEBIAN"):
                 key = "DEBIAN"
-            elif platform.startswith("REDHAT"):
+            elif platform.startswith("REDHAT") or platform.startswith("RED HAT"):
                 key = "REDHAT"
-            elif platform.startswith("SUSE"):
+            elif platform.startswith("SUSE") or platform.startswith("OPENSUSE"):
                 key = "SUSE"
-            elif platform.startswith("OPEN"):
-                key = "OPENOS"
+            elif platform.startswith("TENCENT"):
+                key = "TENCENTOS"
+            elif platform.startswith("OPENCLOUD"):
+                key = "OPENCLOUDOS"
+            elif platform.startswith("ALMA"):
+                key = "ALMALINUX"
+            elif platform.startswith("ROCKY"):
+                key = "ROCKY"
+            elif platform.startswith("FEDORA"):
+                key = "FEDORA"
+            elif platform.startswith("FREEBSD"):
+                key = "FREEBSD"
+            elif platform.startswith("COREOS"):
+                key = "COREOS"
             else:
                 key = "OTHER"
             buckets.setdefault(key, []).append(img)
@@ -462,26 +376,6 @@ class InstanceConfigDialog(QDialog):
         self._stop_price_thread()
         self._cleanup_temp_images()
         super().closeEvent(event)
-        
-        # 设置已保存的配置
-        config = self.config_data or get_instance_config()
-        if config.get("default_region"):
-            index = self.region_combo.findData(config["default_region"])
-            if index >= 0:
-                self.region_combo.setCurrentIndex(index)
-                self.on_region_changed()
-        
-        if config.get("default_image_id"):
-            index = self.image_combo.findData(config["default_image_id"])
-            if index >= 0:
-                self.image_combo.setCurrentIndex(index)
-        
-        if config.get("default_zone"):
-            index = self.zone_combo.findData(config["default_zone"])
-            if index >= 0:
-                self.zone_combo.setCurrentIndex(index)
-        
-        self.update_price()
     
     def on_region_changed(self):
         """区域变化时更新可用区"""
@@ -498,11 +392,6 @@ class InstanceConfigDialog(QDialog):
                     zone_code = zone.get("zone") or zone.get("Zone")
                     zone_name = zone.get("zone_name") or zone.get("ZoneName") or ""
                     self.zone_combo.addItem(f"{zone_code} - {zone_name}", zone_code)
-
-            # 同步当前区域的镜像列表（公共镜像）
-            self.all_images = db.list_images(region_data, "PUBLIC_IMAGE") or []
-            self.platform_images = self._categorize_images(self.all_images)
-            self.populate_platform_combo()
 
         self.update_price()
     
@@ -541,7 +430,9 @@ class InstanceConfigDialog(QDialog):
         memory_text = self.memory_edit.text().strip()
         region_data = self.region_combo.currentData()
         zone_data = self.zone_combo.currentData()
-        image_data = self.image_combo.currentData()
+        # 镜像已移至主窗口选择，询价时使用已保存的配置值
+        existing_config = self.config_data or get_instance_config()
+        image_data = existing_config.get("default_image_id")
         disk_type = self.disk_type_combo.currentData() or self.disk_type_combo.currentText()
         disk_size = self.disk_size_edit.value()
         bandwidth = self.bandwidth_edit.value()
@@ -604,14 +495,6 @@ class InstanceConfigDialog(QDialog):
             self.price_label.setText(price_text)
             if hasattr(self, "save_btn") and self.save_btn:
                 self.save_btn.setEnabled(True)
-            # 线程可能已在关闭对话框/保存时被提前停止，这里需要做空值与运行状态判断
-            thread = getattr(self, "_price_thread", None)
-            if thread is not None:
-                try:
-                    if thread.isRunning():
-                        thread.quit()
-                except Exception:
-                    pass
             self._price_query_running = False
             if getattr(self, "_price_query_pending", False):
                 self._price_query_pending = False
@@ -625,14 +508,6 @@ class InstanceConfigDialog(QDialog):
             logger.error(f"查询价格失败: {error_msg}")
             if hasattr(self, "save_btn") and self.save_btn:
                 self.save_btn.setEnabled(True)
-            # 同样需要防止线程在其它地方已被停止导致的空指针
-            thread = getattr(self, "_price_thread", None)
-            if thread is not None:
-                try:
-                    if thread.isRunning():
-                        thread.quit()
-                except Exception:
-                    pass
             self._price_query_running = False
             if getattr(self, "_price_query_pending", False):
                 self._price_query_pending = False
@@ -643,8 +518,8 @@ class InstanceConfigDialog(QDialog):
         self._price_worker.error.connect(on_error)
         self._price_worker.finished.connect(self._price_thread.quit)
         self._price_worker.error.connect(self._price_thread.quit)
-        self._price_worker.finished.connect(self._price_worker.deleteLater)
-        self._price_thread.finished.connect(self._price_thread.deleteLater)
+        # 线程结束后从旧线程列表中清理
+        self._price_thread.finished.connect(lambda t=self._price_thread: self._cleanup_old_thread(t))
         self._price_query_running = True
         self._price_query_pending = False
         logger.info(f"开始询价: cpu={cpu}, mem={memory}, region={region_data}, zone={zone_data}, image={image_data}, disk={disk_size}({disk_type}), bw={bandwidth}, bw_charge={bandwidth_charge}")
@@ -652,15 +527,23 @@ class InstanceConfigDialog(QDialog):
 
     def _stop_price_thread(self):
         """安全停止正在运行的询价线程"""
-        if hasattr(self, "_price_thread") and self._price_thread:
+        thread = getattr(self, "_price_thread", None)
+        worker = getattr(self, "_price_worker", None)
+        if thread is not None:
             try:
-                if self._price_thread.isRunning():
-                    self._price_thread.quit()
-                    self._price_thread.wait(1000)
+                if thread.isRunning():
+                    thread.quit()
+                    if not thread.wait(2000):
+                        # 线程仍在运行，保留引用防止GC销毁
+                        self._old_threads.append((thread, worker))
             except Exception:
                 pass
         self._price_thread = None
         self._price_worker = None
+
+    def _cleanup_old_thread(self, thread):
+        """线程结束后从旧线程列表中移除"""
+        self._old_threads = [(t, w) for t, w in self._old_threads if t is not thread]
     
     def accept(self):
         """保存配置（同步写本地，避免多余后台日志）"""
@@ -672,9 +555,9 @@ class InstanceConfigDialog(QDialog):
         memory_text = self.memory_edit.text().strip()
         region_data = self.region_combo.currentData()
         zone_data = self.zone_combo.currentData()
-        image_data = self.image_combo.currentData()
-        password = self.password_edit.text()
-        password_confirm = self.password_confirm_edit.text()
+        # 镜像已移至主窗口选择，保存时保留原有配置值
+        existing_config = self.config_data or get_instance_config()
+        image_data = existing_config.get("default_image_id")
         
         if not cpu_text or not cpu_text.isdigit() or int(cpu_text) <= 0:
             self._show_message("请输入有效的CPU核数（大于0的数字）", "warning")
@@ -691,28 +574,8 @@ class InstanceConfigDialog(QDialog):
             self._show_message("请选择区域", "warning")
             return
         
-        if not password:
-            self._show_message("请输入密码", "warning")
-            return
-        
-        if password != password_confirm:
-            self._show_message("两次输入的密码不一致", "warning")
-            return
-        
-        from utils.utils import validate_password
-        is_valid, error_msg = validate_password(password)
-        if not is_valid:
-            self._show_message(f"密码验证失败: {error_msg}", "error")
-            return
-        
         def do_validate_and_save():
-            # 后台执行：调用 API 校验镜像/可用区，保存配置
-            if image_data:
-                images = self.cvm_manager.get_images("PUBLIC_IMAGE")
-                all_images = [img['ImageId'] for img in images]
-                if image_data not in all_images:
-                    raise RuntimeError(f"镜像 {image_data} 不可用，请重新选择")
-
+            # 校验可用区，保存配置
             if region_data and not zone_data:
                 zones = self.cvm_manager.get_zones(region_data)
                 if not zones:
@@ -724,7 +587,7 @@ class InstanceConfigDialog(QDialog):
                 region_data,
                 zone_data,
                 image_data,
-                password,
+                existing_config.get("default_password", ""),
                 self.disk_type_combo.currentData() or self.disk_type_combo.currentText(),
                 int(self.disk_size_edit.value()),
                 int(self.bandwidth_edit.value()),

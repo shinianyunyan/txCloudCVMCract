@@ -146,12 +146,27 @@ func runFullPreload(req PreloadRequest) error {
 				_ = syncZonesToDB(db, rid, zResp.Response.ZoneSet)
 			}
 
-			// 镜像
-			iReq := cvm.NewDescribeImagesRequest()
-			iReq.Limit = common.Uint64Ptr(60)
-			iReq.Filters = []*cvm.Filter{{Name: common.StringPtr("image-type"), Values: []*string{common.StringPtr("PUBLIC_IMAGE")}}}
-			if iResp, err := rClient.DescribeImages(iReq); err == nil {
-				_ = syncImagesToDB(db, rid, iResp.Response.ImageSet)
+			// 镜像（分页拉取所有公共镜像）
+			var allImages []*cvm.Image
+			var imgOffset uint64 = 0
+			const imgLimit uint64 = 100
+			for {
+				iReq := cvm.NewDescribeImagesRequest()
+				iReq.Offset = common.Uint64Ptr(imgOffset)
+				iReq.Limit = common.Uint64Ptr(imgLimit)
+				iReq.Filters = []*cvm.Filter{{Name: common.StringPtr("image-type"), Values: []*string{common.StringPtr("PUBLIC_IMAGE")}}}
+				iResp, err := rClient.DescribeImages(iReq)
+				if err != nil {
+					break
+				}
+				allImages = append(allImages, iResp.Response.ImageSet...)
+				if uint64(len(iResp.Response.ImageSet)) < imgLimit {
+					break
+				}
+				imgOffset += imgLimit
+			}
+			if len(allImages) > 0 {
+				_ = syncImagesToDB(db, rid, allImages)
 			}
 		}(regionID)
 	}

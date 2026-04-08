@@ -475,10 +475,6 @@ class CVMManager:
                         break
                     offset += limit
             
-            from config.config_manager import get_instance_config
-            cfg = get_instance_config()
-            saved_pwd = cfg.get("default_password", "")  # 统一回填 UI 显示用密码
-            
             instances = []
             for i in all_instances:
                 placement = i.Placement
@@ -511,7 +507,6 @@ class CVMManager:
                     "PublicIpAddresses": public_ips,
                     "PrivateIpAddresses": private_ips,
                     "IpAddress": ip,
-                    "Password": saved_pwd
                 })
             
             try:

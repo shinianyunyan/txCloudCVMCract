@@ -73,9 +73,12 @@ class CVMApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.loading_timer = QTimer()
-        self.loading_timer.setSingleShot(True)  # 单次定时，回调内自行续约
-        self.loading_dots = 1
+        self.loading_timer.setSingleShot(False)
+        self.loading_timer.setInterval(200)  # 200ms 切换，动画更流畅
+        self.loading_dots = 0
         self.is_loading = False
+        self._loading_refcount = 0
+        self._loading_suffix = ""  # 动画后缀描述，如"正在提交创建请求"
         self._bg_threads = []  # 保存后台线程引用，防止被GC
         self.init_ui()
     
@@ -93,12 +96,12 @@ class CVMApp(QMainWindow):
         screen_width = screen_geometry.width()
         screen_height = screen_geometry.height()
         
-        # 默认使用屏幕宽度 95%、高度 90%，兼顾视野与可用空间
-        window_width = int(screen_width * 0.95)
-        window_height = int(screen_height * 0.9)
+        # 默认使用屏幕宽度 80%、高度 75%
+        window_width = int(screen_width * 0.80)
+        window_height = int(screen_height * 0.75)
         
-        # 确保主界面控件不拥挤：宽度至少 1400 像素，高度不低于屏幕 60%
-        min_window_width = max(1400, int(screen_width * 0.7))
+        # 确保主界面控件不拥挤：宽度至少 1200 像素
+        min_window_width = max(1200, int(screen_width * 0.6))
         if window_width < min_window_width:
             window_width = min_window_width
         
@@ -108,8 +111,8 @@ class CVMApp(QMainWindow):
         
         self.setGeometry(x, y, window_width, window_height)
         
-        min_width = max(1400, int(screen_width * 0.7))
-        min_height = int(screen_height * 0.6)
+        min_width = max(1200, int(screen_width * 0.6))
+        min_height = int(screen_height * 0.5)
         self.setMinimumSize(min_width, min_height)
         
         # 设置窗口图标，兼容旧路径
@@ -139,7 +142,16 @@ class CVMApp(QMainWindow):
         
         # 初始化加载动画定时器
         self.loading_timer.timeout.connect(self._update_loading_status)
-        self.loading_timer.setSingleShot(False)
+
+    def _safe_show_message(self, msg, msg_type="error"):
+        """安全地显示消息，在回调异常时使用"""
+        try:
+            if hasattr(self, 'main_window') and hasattr(self.main_window, 'show_message'):
+                self.main_window.show_message(msg, msg_type, 5000)
+            else:
+                self.statusBar().showMessage(msg, 5000)
+        except Exception:
+            pass
     
     def create_menu_bar(self):
         """
@@ -289,6 +301,9 @@ class CVMApp(QMainWindow):
         """)
         
         if dialog.exec_() == QDialog.Accepted:
+            # 停止 Go 预加载服务
+            from core.preload import stop_go_server
+            stop_go_server()
             # 等待所有后台线程完成
             import logging
             logger = logging.getLogger("CVM_Manager")
@@ -309,46 +324,69 @@ class CVMApp(QMainWindow):
         else:
             event.ignore()
     
-    def start_loading_status(self):
-        """开始显示加载状态"""
-        self.is_loading = True
-        self.loading_dots = 0
-        if self.loading_timer.isActive():
-            self.loading_timer.stop()
-        self._update_loading_status()
-    
-    def stop_loading_status(self):
-        """停止加载状态，恢复就绪"""
-        self.is_loading = False
-        if self.loading_timer.isActive():
-            self.loading_timer.stop()
-        if hasattr(self, 'status_label'):
-            self.status_label.setText('<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 欢迎使用腾讯云 CVM 实例管理工具')
-    
-    def _update_loading_status(self):
-        """更新加载状态动画"""
+    def start_loading_status(self, suffix=""):
+        """开始加载动画（引用计数，多任务安全）"""
+        self._loading_refcount += 1
+        if suffix:
+            self._loading_suffix = suffix
         if not self.is_loading:
-            return
+            self.is_loading = True
+            self.loading_dots = 0
+            if not self.loading_timer.isActive():
+                self.loading_timer.start()
+            self._update_loading_status()
+    
+    def stop_loading_status(self, force=False):
+        """停止加载动画，引用计数归零或 force=True 时恢复就绪"""
+        if force:
+            self._loading_refcount = 0
+        else:
+            self._loading_refcount = max(0, self._loading_refcount - 1)
+        if self._loading_refcount <= 0:
+            self._loading_refcount = 0
+            self.is_loading = False
+            self._loading_suffix = ""
+            if self.loading_timer.isActive():
+                self.loading_timer.stop()
+            if hasattr(self, 'status_label'):
+                self.status_label.setText(
+                    '<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 欢迎使用腾讯云 CVM 实例管理工具'
+                )
+
+    def set_status_text(self, rich_text: str):
+        """
+        设置加载动画的描述后缀（如"正在提交创建请求"）。
+        若当前处于加载中，更新后缀并立即刷新显示。
+        若当前不在加载中，直接设置状态栏文本。
+        """
         if not hasattr(self, 'status_label'):
             return
-        # 循环 1~3 个点，定时器每次触发都会刷新
+        if self.is_loading:
+            self._loading_suffix = rich_text
+            self._update_loading_status()
+        else:
+            self.status_label.setText(rich_text)
+
+    def _update_loading_status(self):
+        """定时器回调：仅刷新点号动画（. → .. → ...）"""
+        if not self.is_loading or not hasattr(self, 'status_label'):
+            return
         self.loading_dots = (self.loading_dots % 3) + 1
         dots = "." * self.loading_dots
-        self.status_label.setText(f'<span style="font-weight: bold; color: #f57c00;">加载中{dots}</span> | 欢迎使用腾讯云 CVM 实例管理工具')
-        # 若仍处于加载状态，则续约下一次动画更新
-        if self.is_loading:
-            self.loading_timer.start(300)
+        suffix = self._loading_suffix
+        if suffix:
+            self.status_label.setText(
+                f'<span style="font-weight: bold; color: #f57c00;">{suffix}{dots}</span>'
+            )
+        else:
+            self.status_label.setText(
+                f'<span style="font-weight: bold; color: #f57c00;">处理中{dots}</span>'
+            )
 
     def run_in_background(self, func, callback=None, auto_stop=True, err_callback=None, use_loading=True, *args, **kwargs):
         """
         在独立线程运行耗时任务，避免阻塞 UI。
-
-        Args:
-            func: 耗时函数
-            callback: 完成后的回调（在主线程执行），入参为 func 返回值
-            auto_stop: 是否在完成后自动停止加载动画
-            err_callback: 异常回调（在主线程执行），入参为错误信息
-            use_loading: 是否显示加载动画
+        use_loading=True 时启动加载动画，False 时静默执行。
         """
         import logging
         logger = logging.getLogger("CVM_Manager")
@@ -369,7 +407,7 @@ class CVMApp(QMainWindow):
         logger.info(f"启动线程执行: {task_desc}")
         
         if use_loading:
-            self.start_loading_status()
+            self.start_loading_status(task_desc)
 
         thread = QThread()
         worker = Worker(func, *args, **kwargs)
@@ -377,27 +415,41 @@ class CVMApp(QMainWindow):
 
         def handle_finished(result):
             logger.info(f"线程执行完成: {task_desc}")
-            if auto_stop and use_loading:
+            if use_loading and auto_stop:
                 self.stop_loading_status()
-            if callback:
-                callback(result)
+            try:
+                if callback:
+                    callback(result)
+            except Exception as cb_err:
+                logger.error(f"回调执行异常({task_desc}): {cb_err}")
+                import traceback
+                logger.error(f"回调异常堆栈: {traceback.format_exc()}")
+                self._safe_show_message(f"操作完成但处理结果时出错: {cb_err}", "error")
             self._bg_threads = [t for t in self._bg_threads if t is not thread]
 
         def handle_error(msg):
             logger.error(f"线程执行失败: {task_desc}, 错误: {msg}")
-            if auto_stop and use_loading:
+            if use_loading and auto_stop:
                 self.stop_loading_status()
-            if err_callback:
-                err_callback(msg)
-            else:
-                QMessageBox.critical(self, "错误", msg)
+            try:
+                if err_callback:
+                    err_callback(msg)
+                else:
+                    QMessageBox.critical(self, "错误", msg)
+            except Exception as cb_err:
+                logger.error(f"错误回调执行异常({task_desc}): {cb_err}")
+                import traceback
+                logger.error(f"错误回调异常堆栈: {traceback.format_exc()}")
+                self._safe_show_message(f"处理错误信息时出错: {cb_err}", "error")
             self._bg_threads = [t for t in self._bg_threads if t is not thread]
 
         # 连接信号
         worker.finished.connect(handle_finished)
         worker.error.connect(handle_error)
         worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
+        worker.error.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         
         # 使用 DirectConnection 确保 run 立即执行，避免事件循环问题

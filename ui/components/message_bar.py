@@ -180,6 +180,10 @@ class MessageBar(QWidget):
         self.right_margin = self.message_spacing  # 距离右侧距离等于消息间距
         
         self.init_ui()
+        
+        # 监听父窗口的resize事件，自动更新消息位置
+        if parent:
+            parent.installEventFilter(self)
     
     def init_ui(self):
         """初始化UI"""
@@ -234,15 +238,15 @@ class MessageBar(QWidget):
         if not self.parent_window:
             return
         
-        parent_rect = self.parent_window.geometry()
-        # 设置合适的宽度（父窗口宽度的35%，最小250，最大400）
-        width = max(250, min(400, int(parent_rect.width() * 0.35)))
+        # 使用父窗口的内容区域尺寸（局部坐标）
+        parent_width = self.parent_window.width()
+        # 设置合适的宽度（父窗口宽度的35%，最小250，最大为父窗口宽度减去两倍间距）
+        max_width = max(250, parent_width - self.message_spacing * 2)
+        width = max(250, min(max_width, int(parent_width * 0.35)))
         
-        # 修改这里：让消息弹窗向左移动，距离右边框的距离等于消息弹窗之间的间距
-        # 原代码：x = parent_rect.x() + parent_rect.width() - width - self.right_margin
-        x = parent_rect.x() + parent_rect.width() - width - self.message_spacing  # 使用message_spacing代替right_margin
-        
-        y = parent_rect.y() + self.top_margin
+        # 消息紧贴父窗口右侧内边距
+        x = parent_width - width - self.message_spacing
+        y = self.top_margin
         
         # 更新每个消息项的位置和大小（每个都是独立窗口）
         for i, msg in enumerate(self.messages):
@@ -277,3 +281,11 @@ class MessageBar(QWidget):
     def show_info(self, message: str, duration: int = 3000):
         """显示信息消息"""
         self.show_message(message, "info", duration)
+
+    def eventFilter(self, obj, event):
+        """监听父窗口resize事件，自动重新定位消息"""
+        from PyQt5.QtCore import QEvent
+        if obj == self.parent_window and event.type() == QEvent.Resize:
+            if self.messages:
+                self.update_layout()
+        return super().eventFilter(obj, event)

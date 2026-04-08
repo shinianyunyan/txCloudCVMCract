@@ -86,6 +86,9 @@ class MainWindow(QWidget):
             getattr(self, "btn_terminate", None),
             getattr(self, "btn_reset_pwd", None),
             getattr(self, "btn_send_command", None),
+            getattr(self, "platform_combo", None),
+            getattr(self, "custom_image_combo", None),
+            getattr(self, "image_source_combo", None),
         ]
         for w in controls:
             if w is not None:
@@ -172,11 +175,17 @@ class MainWindow(QWidget):
         self.image_source_combo.currentIndexChanged.connect(self.on_image_source_changed)
         self.image_source_combo.setToolTip("选择镜像来源")
 
-        # 自定义镜像列表（仅当选择自定义时可用）
+        # 系统类型筛选（公共镜像模式下按平台过滤）
+        self.platform_combo = QComboBox()
+        self.platform_combo.setMinimumWidth(120)
+        self.platform_combo.currentIndexChanged.connect(self.on_platform_changed)
+        self.platform_combo.setToolTip("选择系统类型")
+
+        # 镜像列表
         self.custom_image_combo = QComboBox()
         self.custom_image_combo.setMinimumWidth(220)
         self.custom_image_combo.setEnabled(False)
-        self.custom_image_combo.setToolTip("选择自定义镜像")
+        self.custom_image_combo.setToolTip("选择镜像")
         
         self.btn_create = QPushButton("➕ 创建实例")
         self.btn_create.setProperty("class", "primary")
@@ -193,6 +202,8 @@ class MainWindow(QWidget):
         btn_group1.addWidget(self.count_spin)
         btn_group1.addWidget(QLabel("镜像来源:"))
         btn_group1.addWidget(self.image_source_combo)
+        btn_group1.addWidget(QLabel("系统类型:"))
+        btn_group1.addWidget(self.platform_combo)
         btn_group1.addWidget(self.custom_image_combo)
         btn_group1.addWidget(self.btn_create)
         btn_group1.addWidget(self.btn_instance_config)
@@ -343,9 +354,6 @@ class MainWindow(QWidget):
         """从本地数据库读取实例并刷新列表 + 统计信息（仅做轻量级 UI 操作）"""
         db = get_db()
         raw_instances = db.list_instances()
-        from config.config_manager import get_instance_config
-        cfg = get_instance_config()
-        pwd = cfg.get("default_password", "")
         instances = []
         for row in raw_instances or []:
             instances.append({
@@ -361,7 +369,7 @@ class MainWindow(QWidget):
                 "ExpiredTime": row.get("expired_time") or "",
                 "Platform": row.get("platform") or "",
                 "IpAddress": row.get("public_ip") or row.get("private_ip") or "",
-                "Password": pwd
+                "Password": row.get("password") or ""
             })
 
         self.instance_list.update_instances(instances)
@@ -571,10 +579,6 @@ class MainWindow(QWidget):
                         executing_completed.add(invocation_id)
                 self.executing_invocation_ids.difference_update(executing_completed)
 
-                # 如果所有指令都执行完成，更新状态栏
-                if not self.executing_invocation_ids:
-                    self._set_status_text('<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 指令执行完成')
-
             # 刷新本地展示（跳过同步，避免额外 API）
             self.refresh_instances(silent=True, skip_sync=True)
 
@@ -607,12 +611,6 @@ class MainWindow(QWidget):
                 on_error(str(e))
                 return
             on_done(data)
-
-    def _set_status_text(self, rich_text: str):
-        """更新主窗口状态栏文本"""
-        main_app = self.window()
-        if main_app and hasattr(main_app, "status_label"):
-            main_app.status_label.setText(rich_text)
 
     def _is_action_blocked_by_update(self) -> bool:
         """
@@ -658,26 +656,24 @@ class MainWindow(QWidget):
             self.show_instance_config()
             return
         
-        if not config.get("default_password"):
-            self.show_message("请先在实例配置中设置密码", "warning", 5000)
-            self.show_instance_config()
-            return
-        
         # 根据选择的镜像来源确定镜像ID
-        image_id = config.get("default_image_id")
         source = self.image_source_combo.currentData()
+        image_id = self.custom_image_combo.currentData()
         if source == "PRIVATE":
             if not self.custom_images:
                 self.show_message("没有可用的自定义镜像", "warning", 3000)
                 return
-            image_id = self.custom_image_combo.currentData()
             if not image_id:
                 self.show_message("请选择自定义镜像", "warning", 3000)
                 return
         else:
             if not image_id:
-                self.show_message("未在实例配置中设置公共镜像，请先配置", "warning", 3000)
+                self.show_message("未选择公共镜像，请先选择或配置", "warning", 3000)
                 return
+        
+        # 为本次创建生成随机密码（同批实例共享同一密码）
+        from utils.utils import generate_password
+        random_password = generate_password()
         
         # 立即显示"正在创建"提示（前置反馈）
         if count == 1:
@@ -685,10 +681,7 @@ class MainWindow(QWidget):
         else:
             self.show_message(f"已提交创建请求，正在创建 {count} 个实例...", "info", 5000)
         
-        # 更新主窗口状态栏为"创建中..."
-        self._set_status_text('<span style="font-weight: bold; color: #f57c00;">创建中...</span> | 正在提交创建请求')
-        
-        # 强制刷新UI，确保消息和状态栏立即显示
+        # 强制刷新UI，确保消息立即显示
         QApplication.processEvents()
         
         # 后台线程执行创建，避免阻塞 UI
@@ -708,7 +701,7 @@ class MainWindow(QWidget):
                 config.get("default_cpu", 2),
                 config.get("default_memory", 4),
                 config["default_region"],
-                config["default_password"],
+                random_password,
                 image_id,
                 None,
                 config.get("default_zone"),
@@ -721,7 +714,7 @@ class MainWindow(QWidget):
         
         # 延迟启动后台任务，给UI时间显示第一条消息（50ms足够）
         def start_create_task():
-            main_app.run_in_background(create_task, on_success, auto_stop=True, err_callback=on_error, use_loading=False)
+            main_app.run_in_background(create_task, on_success, auto_stop=True, err_callback=on_error)
         
         def on_success(result):
             # 获取创建的实例ID列表
@@ -732,9 +725,14 @@ class MainWindow(QWidget):
                 instance_ids = result.get('InstanceIds', [])
             
             logger.info(f"[创建任务成功] 实例ID列表={instance_ids} warnings={result.get('Warnings')}")
-            # 停止全局加载状态
-            if hasattr(main_app, "stop_loading_status"):
-                main_app.stop_loading_status()
+            
+            # 将密码存储到数据库中对应的实例记录
+            try:
+                db = get_db()
+                db.set_instances_password([iid for iid in instance_ids if iid], random_password)
+                logger.info(f"已保存密码到 {len(instance_ids)} 个实例记录")
+            except Exception as e:
+                logger.warning(f"保存密码到实例记录失败: {e}")
             
             # 显示最终成功消息
             if count == 1:
@@ -758,17 +756,11 @@ class MainWindow(QWidget):
                 self.pending_poll_timer.start()
             
             # 延迟刷新本地展示，避免阻塞主线程（数据库已写入）
-            # 使用 QTimer.singleShot(100) 延迟刷新，给 UI 时间处理其他事件
             QTimer.singleShot(100, lambda: self.refresh_instances(silent=True, skip_sync=True))
-            
-            self._set_status_text('<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 创建完成')
         
         def on_error(err_msg):
             logger.error(f"创建实例失败: {err_msg}")
             self.show_message(f"无法创建实例: {err_msg}", "error", 5000)
-            if hasattr(main_app, "stop_loading_status"):
-                main_app.stop_loading_status()
-            self._set_status_text('<span style="font-weight: bold; color: #2e7d32;">就绪</span>')
         
         if hasattr(main_app, "run_in_background"):
             # 延迟50ms启动后台任务，确保"发起创建"消息先显示
@@ -929,7 +921,6 @@ class MainWindow(QWidget):
                     start_task,
                     callback=on_success,
                     err_callback=on_error,
-                    use_loading=False  # 开机不需要显示加载动画
                 )
             else:
                 # 降级方案：直接调用
@@ -1112,7 +1103,6 @@ class MainWindow(QWidget):
                     stop_task,
                     callback=on_success,
                     err_callback=on_error,
-                    use_loading=False  # 关机不需要显示加载动画
                 )
             else:
                 # 降级方案：直接调用
@@ -1293,7 +1283,6 @@ class MainWindow(QWidget):
                     stop_task,
                     callback=on_success,
                     err_callback=on_error,
-                    use_loading=False  # 关机不需要显示加载动画
                 )
             else:
                 # 降级方案：直接调用
@@ -1433,7 +1422,7 @@ class MainWindow(QWidget):
                 main_app = main_app.parent()
             
             if main_app and hasattr(main_app, 'run_in_background'):
-                main_app.run_in_background(terminate_task, on_success, auto_stop=True, err_callback=on_error, use_loading=False)
+                main_app.run_in_background(terminate_task, on_success, auto_stop=True, err_callback=on_error)
             else:
                 # 回退：同步执行（一般不会走到这里）
                 try:
@@ -1498,25 +1487,13 @@ class MainWindow(QWidget):
                 """API调用成功"""
                 logger.info(f"API重置密码成功: {result}")
                 
-                # 保存密码到配置
+                # 保存新密码到每个实例的数据库记录
                 try:
-                    from config.config_manager import get_instance_config, save_instance_config
-                    config = get_instance_config()
-                    save_instance_config(
-                        config.get("default_cpu", 2),
-                        config.get("default_memory", 4),
-                        config.get("default_region"),
-                        config.get("default_zone"),
-                        config.get("default_image_id"),
-                        password,
-                        config.get("default_disk_type", "CLOUD_PREMIUM"),
-                        config.get("default_disk_size", 50),
-                        config.get("default_bandwidth", 10),
-                        config.get("default_bandwidth_charge", "TRAFFIC_POSTPAID_BY_HOUR")
-                    )
-                    logger.info("已保存密码到配置")
+                    db = get_db()
+                    db.set_instances_password(selected_ids, password)
+                    logger.info(f"已保存密码到 {len(selected_ids)} 个实例记录")
                 except Exception as e:
-                    logger.warning(f"保存密码到配置失败: {e}")
+                    logger.warning(f"保存密码到实例记录失败: {e}")
                 
                 # 显示成功消息
                 if running_count > 0:
@@ -1542,7 +1519,6 @@ class MainWindow(QWidget):
                     reset_password_task,
                     callback=on_success,
                     err_callback=on_error,
-                    use_loading=False  # 重置密码不需要显示加载动画
                 )
             else:
                 # 降级方案：直接调用
@@ -1615,10 +1591,7 @@ class MainWindow(QWidget):
                 # 6. 立即显示"成功发起下发指令"消息
                 self.show_message(f"成功发起下发指令，共{len(selected_ids)}个实例", "info", 5000)
                 
-                # 7. 更新状态栏为"指令下发中"
-                self._set_status_text('<span style="font-weight: bold; color: #f57c00;">指令下发中...</span> | 正在下发指令到实例')
-                
-                # 8. 确定命令类型和工作目录
+                # 7. 确定命令类型和工作目录
                 if platform_type == "WINDOWS":
                     command_type = "POWERSHELL"
                     working_directory = r"C:\Program Files\qcloud\tat_agent\workdir"
@@ -1664,8 +1637,6 @@ class MainWindow(QWidget):
                     """API调用失败"""
                     logger.error(f"API下发指令失败: {err_msg}")
                     self.show_message(f"指令下发失败: {err_msg}", "error", 5000)
-                    # 恢复状态栏
-                    self._set_status_text('<span style="font-weight: bold; color: #2e7d32;">就绪</span>')
                 
                 # 获取主应用对象并调用后台任务
                 main_app = self.window()
@@ -1674,7 +1645,6 @@ class MainWindow(QWidget):
                         execute_command_task,
                         callback=on_success,
                         err_callback=on_error,
-                        use_loading=False
                     )
                 else:
                     # 降级方案：直接调用
@@ -1743,6 +1713,8 @@ class MainWindow(QWidget):
             elif dialog.result() == QDialog.Accepted:
                 # 正常保存实例配置
                 self.show_message("实例配置已保存", "success", 2000)
+                # 配置变更后刷新镜像列表（区域可能变了）
+                self.refresh_image_selection()
                 # 配置变更后立即同步一次并刷新本地
                 self.refresh_instances(silent=True)
 
@@ -1768,9 +1740,6 @@ class MainWindow(QWidget):
             self.show_message("当前窗口不支持后台更新配置，请重启程序后重试", "error", 5000)
             # 确保状态与标记被复原
             self.is_reference_updating = False
-            self._set_status_text(
-                '<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 欢迎使用腾讯云 CVM 实例管理工具'
-            )
             return
 
         # 标记为更新中，供创建实例等操作进行拦截
@@ -1780,9 +1749,6 @@ class MainWindow(QWidget):
 
         # 进入“配置更新中”软 loading 状态：禁用主要操作按钮
         self._set_reference_update_loading(True)
-        self._set_status_text(
-            '<span style="font-weight: bold; color: #f57c00;">配置更新中...</span> | 正在从腾讯云同步区域/可用区与镜像信息'
-        )
         # 立即给用户一个气泡提示
         self.show_message("已发起配置更新，请稍候...", "info", 3000)
 
@@ -1795,10 +1761,6 @@ class MainWindow(QWidget):
             self.block_creates_until = time.time() + 2.0
             # 退出“配置更新中” loading 状态，恢复按钮可用
             self._set_reference_update_loading(False)
-            # 恢复状态栏为"就绪"
-            self._set_status_text(
-                '<span style="font-weight: bold; color: #2e7d32;">就绪</span> | 实例配置信息已更新'
-            )
             # 提示用户更新成功，并刷新实例列表视图
             self.show_message("实例配置信息已更新", "success", 3000)
             # 延迟刷新实例列表，避免阻塞UI
@@ -1810,10 +1772,6 @@ class MainWindow(QWidget):
             self.block_creates_until = time.time() + 2.0
             # 退出“配置更新中” loading 状态，恢复按钮可用
             self._set_reference_update_loading(False)
-            # 恢复状态栏为"就绪"（标明失败）
-            self._set_status_text(
-                '<span style="font-weight: bold; color: #d32f2f;">就绪</span> | 配置更新失败'
-            )
             self.show_message(f"配置更新失败: {msg}", "error", 5000)
 
         # 延迟启动后台任务，确保UI状态已更新
@@ -1822,25 +1780,26 @@ class MainWindow(QWidget):
             app_window.run_in_background(
                 preload_reference_data,
                 callback=on_done,
-                auto_stop=False,   # 不使用通用"加载中"文案，保持自定义状态栏文本
+                auto_stop=False,
                 err_callback=on_error,
-                use_loading=False, # 不启动加载动画，只用自定义的"配置更新中..."文案
+                use_loading=False,
             )
         
         # 延迟50ms启动，确保UI状态已更新
         QTimer.singleShot(50, start_update_task)
 
     def on_image_source_changed(self):
-        """镜像来源切换时，更新自定义镜像列表与实例配置按钮状态"""
+        """镜像来源切换时，更新镜像列表与控件状态"""
         source = self.image_source_combo.currentData()
         if source == "PRIVATE":
             self.btn_instance_config.setEnabled(False)
+            self.platform_combo.setEnabled(False)
             self.custom_image_combo.setEnabled(True)
             if not self.custom_images:
                 self.load_custom_images()
         else:
             self.btn_instance_config.setEnabled(True)
-            self.custom_image_combo.setEnabled(False)
+            self.platform_combo.setEnabled(True)
         self.refresh_image_selection()
 
     def load_custom_images(self):
@@ -1859,6 +1818,110 @@ class MainWindow(QWidget):
             self.custom_image_combo.setEnabled(False)
             self.btn_create.setEnabled(False)
 
+    def _categorize_images(self, images):
+        """按平台归类镜像"""
+        buckets = {}
+        for img in images or []:
+            platform = (img.get("Platform") or "OTHER").upper()
+            if platform.startswith("WINDOWS"):
+                key = "WINDOWS"
+            elif platform.startswith("UBUNTU"):
+                key = "UBUNTU"
+            elif platform.startswith("CENTOS"):
+                key = "CENTOS"
+            elif platform.startswith("DEBIAN"):
+                key = "DEBIAN"
+            elif platform.startswith("REDHAT") or platform.startswith("RED HAT"):
+                key = "REDHAT"
+            elif platform.startswith("SUSE") or platform.startswith("OPENSUSE"):
+                key = "SUSE"
+            elif platform.startswith("TENCENT"):
+                key = "TENCENTOS"
+            elif platform.startswith("OPENCLOUD"):
+                key = "OPENCLOUDOS"
+            elif platform.startswith("ALMA"):
+                key = "ALMALINUX"
+            elif platform.startswith("ROCKY"):
+                key = "ROCKY"
+            elif platform.startswith("FEDORA"):
+                key = "FEDORA"
+            elif platform.startswith("FREEBSD"):
+                key = "FREEBSD"
+            elif platform.startswith("COREOS"):
+                key = "COREOS"
+            else:
+                key = "OTHER"
+            buckets.setdefault(key, []).append(img)
+        return buckets
+
+    def _populate_platform_combo(self, platform_images):
+        """刷新系统类型下拉框"""
+        self.platform_combo.blockSignals(True)
+        self.platform_combo.clear()
+        platform_labels = {
+            "WINDOWS": "Windows",
+            "UBUNTU": "Ubuntu",
+            "CENTOS": "CentOS",
+            "DEBIAN": "Debian",
+            "REDHAT": "RedHat",
+            "SUSE": "SUSE/openSUSE",
+            "TENCENTOS": "TencentOS",
+            "OPENCLOUDOS": "OpenCloudOS",
+            "ALMALINUX": "AlmaLinux",
+            "ROCKY": "Rocky Linux",
+            "FEDORA": "Fedora",
+            "FREEBSD": "FreeBSD",
+            "COREOS": "CoreOS",
+            "OTHER": "Other"
+        }
+        if platform_images:
+            platform_keys = list(platform_images.keys())
+            # Debian 优先
+            if "DEBIAN" in platform_keys:
+                platform_keys = ["DEBIAN"] + [k for k in platform_keys if k != "DEBIAN"]
+            if "OTHER" in platform_keys:
+                platform_keys = [k for k in platform_keys if k != "OTHER"] + ["OTHER"]
+            for pk in platform_keys:
+                imgs = platform_images[pk]
+                label = f"{platform_labels.get(pk, pk.title())} ({len(imgs)})"
+                self.platform_combo.addItem(label, pk)
+        else:
+            self.platform_combo.addItem("无可用镜像", None)
+        self.platform_combo.blockSignals(False)
+
+    def on_platform_changed(self):
+        """系统类型切换时，刷新镜像列表"""
+        source = self.image_source_combo.currentData()
+        if source != "PUBLIC":
+            return
+        platform_key = self.platform_combo.currentData()
+        if not platform_key:
+            return
+        from config.config_manager import get_instance_config
+        config = get_instance_config()
+        region = config.get("default_region")
+        default_image_id = config.get("default_image_id")
+        if not region:
+            return
+        db = get_db()
+        all_images = db.list_images(region, "PUBLIC_IMAGE") or []
+        platform_images = self._categorize_images(all_images)
+        filtered = platform_images.get(platform_key, [])
+        self.custom_image_combo.clear()
+        if filtered:
+            selected_index = 0
+            for i, img in enumerate(filtered):
+                name = img.get("ImageName") or img.get("ImageId")
+                self.custom_image_combo.addItem(f"{name} ({img.get('ImageId')})", img.get("ImageId"))
+                if img.get("ImageId") == default_image_id:
+                    selected_index = i
+            self.custom_image_combo.setEnabled(True)
+            self.custom_image_combo.setCurrentIndex(selected_index)
+        else:
+            self.custom_image_combo.addItem("无可用镜像", None)
+            self.custom_image_combo.setEnabled(False)
+        self.btn_create.setEnabled(bool(filtered))
+
     def refresh_image_selection(self):
         """根据镜像来源刷新下拉内容和创建按钮可用性"""
         source = self.image_source_combo.currentData()
@@ -1866,6 +1929,7 @@ class MainWindow(QWidget):
         self.custom_image_combo.clear()
         if source == "PRIVATE":
             self.btn_instance_config.setEnabled(False)
+            self.platform_combo.setEnabled(False)
             if not self.custom_images:
                 self.custom_image_combo.addItem("无可用自定义镜像", None)
                 self.custom_image_combo.setEnabled(False)
@@ -1879,15 +1943,30 @@ class MainWindow(QWidget):
                 if self.custom_image_combo.currentData() is None:
                     self.btn_create.setEnabled(False)
         else:
-            # 公共镜像模式：显示当前实例配置中的镜像
+            # 公共镜像模式：按系统类型筛选
             from config.config_manager import get_instance_config
             config = get_instance_config()
-            image_id = config.get("default_image_id")
-            label = image_id or "请配置实例镜像"
-            self.custom_image_combo.addItem(label, image_id)
-            self.custom_image_combo.setEnabled(False)
+            region = config.get("default_region")
             self.btn_instance_config.setEnabled(True)
-            if not image_id:
+            self.platform_combo.setEnabled(True)
+            if region:
+                db = get_db()
+                all_images = db.list_images(region, "PUBLIC_IMAGE") or []
+                platform_images = self._categorize_images(all_images)
+                if platform_images:
+                    self._populate_platform_combo(platform_images)
+                    # 触发按当前平台过滤镜像
+                    self.on_platform_changed()
+                    return
+            # 无数据时
+            self.platform_combo.clear()
+            self.platform_combo.addItem("无可用镜像", None)
+            self.platform_combo.setEnabled(False)
+            default_image_id = config.get("default_image_id") if region else None
+            label = default_image_id or "请配置实例镜像"
+            self.custom_image_combo.addItem(label, default_image_id)
+            self.custom_image_combo.setEnabled(bool(default_image_id))
+            if not default_image_id:
                 self.btn_create.setEnabled(False)
 
 
