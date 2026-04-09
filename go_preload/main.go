@@ -1,16 +1,23 @@
 package main
 
+/*
+   Go 预加载模块 — 编译为 c-shared DLL，由 Python ctypes 直接调用。
+   编译命令：go build -buildmode=c-shared -o go_preload.dll main.go
+*/
+
+/*
+#include <stdlib.h>
+*/
+import "C"
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"sync"
+	"unsafe"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
@@ -18,99 +25,74 @@ import (
 	cvm "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm/v20170312"
 )
 
-type PreloadRequest struct {
-	SecretID      string `json:"secret_id"`
-	SecretKey     string `json:"secret_key"`
-	DefaultRegion string `json:"default_region"`
-}
+// 模块级变量：数据库路径（由 Python 侧传入）
+var gDBPath string
 
-type PreloadResponse struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-}
+//export GoPreloadInit
+func GoPreloadInit(dbPath *C.char, logPath *C.char) C.int {
+	gDBPath = C.GoString(dbPath)
 
-func main() {
-	initLogger()
-	http.HandleFunc("/preload_all", handlePreloadAll)
-	http.HandleFunc("/health", handleHealth)
-
-	addr := ":8088"
-	log.Printf("Go Preload Server (Safe Mode) listening on %s\n", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
-		log.Fatalf("failed to start server: %v", err)
-	}
-}
-
-func handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "mode": "cgo-full"})
-}
-
-func initLogger() {
-	wd, _ := os.Getwd()
-	root := filepath.Clean(filepath.Join(wd, ".."))
-	logPath := filepath.Join(root, "cvm_manager.log")
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err == nil {
-		log.SetOutput(io.MultiWriter(os.Stdout, f))
+	lp := C.GoString(logPath)
+	if lp != "" {
+		f, err := os.OpenFile(lp, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err == nil {
+			log.SetOutput(io.MultiWriter(os.Stdout, f))
+		}
 	}
 	log.SetFlags(log.LstdFlags)
 	log.SetPrefix("[GO] ")
+	log.Printf("Go DLL 已初始化, db=%s", gDBPath)
+	return 0
 }
 
-func handlePreloadAll(w http.ResponseWriter, r *http.Request) {
-	// 增加 Panic 恢复，防止进程崩溃
+//export GoPreloadAll
+func GoPreloadAll(secretID *C.char, secretKey *C.char, defaultRegion *C.char) *C.char {
 	defer func() {
 		if err := recover(); err != nil {
 			log.Printf("CRITICAL PANIC: %v\n%s", err, debug.Stack())
-			http.Error(w, "internal server error", http.StatusInternalServerError)
 		}
 	}()
 
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+	sid := C.GoString(secretID)
+	skey := C.GoString(secretKey)
+	region := C.GoString(defaultRegion)
+	if region == "" {
+		region = "ap-beijing"
 	}
 
-	var req PreloadRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("Decode error: %v", err)
-		http.Error(w, "invalid json", http.StatusBadRequest)
-		return
-	}
+	log.Printf("收到同步请求 (Region: %s)，正在执行...", region)
 
-	if req.DefaultRegion == "" {
-		req.DefaultRegion = "ap-beijing"
-	}
-
-	log.Printf("收到同步请求 (Region: %s)，正在执行...", req.DefaultRegion)
-
-	if err := runFullPreload(req); err != nil {
+	if err := runFullPreload(sid, skey, region); err != nil {
 		log.Printf("同步失败: %v", err)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(PreloadResponse{Success: false, Message: err.Error()})
-		return
+		errMsg := fmt.Sprintf("ERROR:%s", err.Error())
+		return C.CString(errMsg)
 	}
 
 	log.Printf("同步成功完成")
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(PreloadResponse{Success: true, Message: "success"})
+	return C.CString("OK")
 }
 
-func runFullPreload(req PreloadRequest) error {
-	dbPath, err := resolveDBPath()
-	if err != nil {
-		return err
+//export GoFreeString
+func GoFreeString(p *C.char) {
+	C.free(unsafe.Pointer(p))
+}
+
+func main() {
+	// c-shared 模式要求 main 函数存在但不执行
+}
+
+func runFullPreload(secretID, secretKey, defaultRegion string) error {
+	if gDBPath == "" {
+		return fmt.Errorf("数据库路径未初始化，请先调用 GoPreloadInit")
 	}
 
-	// 增加写等待，防止数据库忙
-	db, err := sql.Open("sqlite3", dbPath+"?_journal=WAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite3", gDBPath+"?_journal=WAL&_busy_timeout=5000")
 	if err != nil {
 		return fmt.Errorf("open db failed: %w", err)
 	}
 	defer db.Close()
 
-	client, err := newCvmClient(req.SecretID, req.SecretKey, req.DefaultRegion)
+	client, err := newCvmClient(secretID, secretKey, defaultRegion)
 	if err != nil {
 		return fmt.Errorf("init client failed: %w", err)
 	}
@@ -136,7 +118,7 @@ func runFullPreload(req PreloadRequest) error {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			rClient, err := newCvmClient(req.SecretID, req.SecretKey, rid)
+			rClient, err := newCvmClient(secretID, secretKey, rid)
 			if err != nil {
 				return
 			}
@@ -173,7 +155,7 @@ func runFullPreload(req PreloadRequest) error {
 	wg.Wait()
 
 	// 3. 同步实例
-	return syncInstances(db, client, req.DefaultRegion)
+	return syncInstances(db, client, defaultRegion)
 }
 
 func syncRegionsToDB(db *sql.DB, regions []*cvm.RegionInfo) error {
@@ -210,7 +192,8 @@ func syncImagesToDB(db *sql.DB, regionID string, images []*cvm.Image) error {
 }
 
 func syncInstances(db *sql.DB, client *cvm.Client, defaultRegion string) error {
-	_, _ = db.Exec("UPDATE instances SET status='-1', updated_at=strftime('%s','now') WHERE status != '-1'")
+	// 收集 API 返回的所有实例 ID，用于后续标记缺失实例
+	var validIDs []string
 	var offset uint64 = 0
 	const limit uint64 = 100
 	for {
@@ -245,12 +228,30 @@ func syncInstances(db *sql.DB, client *cvm.Client, defaultRegion string) error {
 			}
 
 			_, _ = stmt.Exec(str(inst.InstanceId), str(inst.InstanceName), str(inst.InstanceState), defaultRegion, zone, str(inst.InstanceType), str(inst.ImageId), i64(inst.CPU), i64(inst.Memory), priv, pub, str(inst.CreatedTime))
+			validIDs = append(validIDs, str(inst.InstanceId))
 		}
 		_ = tx.Commit()
 		if len(resp.Response.InstanceSet) < int(limit) {
 			break
 		}
 		offset += limit
+	}
+
+	// API 拉取完成后，将不在返回列表中的实例标记为 -1（已销毁/不存在）
+	if len(validIDs) > 0 {
+		placeholders := ""
+		args := make([]interface{}, len(validIDs))
+		for i, id := range validIDs {
+			if i > 0 {
+				placeholders += ","
+			}
+			placeholders += "?"
+			args[i] = id
+		}
+		_, _ = db.Exec(
+			"UPDATE instances SET status='-1', updated_at=strftime('%s','now') WHERE status != '-1' AND instance_id NOT IN ("+placeholders+")",
+			args...,
+		)
 	}
 	return nil
 }
@@ -266,11 +267,6 @@ func i64(p *int64) int64 {
 		return 0
 	}
 	return *p
-}
-
-func resolveDBPath() (string, error) {
-	wd, _ := os.Getwd()
-	return filepath.Join(filepath.Dir(wd), "data", "cvm_cache.db"), nil
 }
 
 func newCvmClient(secretID, secretKey, region string) (*cvm.Client, error) {

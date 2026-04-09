@@ -49,7 +49,8 @@ def get_style_sheet():
     - 统一窗口、按钮、表格、输入框、菜单、滚动条的外观。
     """
     scale = get_dpi_scale()
-    assets_dir = os.path.join(os.path.dirname(__file__), "assets")
+    from utils.utils import get_resource_dir
+    assets_dir = os.path.join(get_resource_dir(), "ui", "assets")
     arrow_icon_down = os.path.abspath(os.path.join(assets_dir, "向下.svg")).replace("\\", "/")
     arrow_icon_up = os.path.abspath(os.path.join(assets_dir, "向上.svg")).replace("\\", "/")
     

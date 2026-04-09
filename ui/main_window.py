@@ -426,11 +426,10 @@ class MainWindow(QWidget):
         def sync_task():
             """
             后台任务：
-                - 标记所有实例为删除状态（-1）。
                 - 调用腾讯云 API 拉取最新实例列表，写入本地 SQLite。
+                - get_instances(None) 内部会通过 soft_delete_missing 标记
+                  不在 API 返回中的实例为 -1，无需预先批量标记。
             """
-            db = get_db()
-            db.mark_all_instances_as_deleted()
             # 与原实现一致：None 表示拉取当前区域的所有实例
             self.cvm_manager.get_instances(None)
             return None
@@ -459,9 +458,10 @@ class MainWindow(QWidget):
             main_app.run_in_background(
                 sync_task,
                 callback=on_done,
-                auto_stop=False,
+                auto_stop=True,
                 err_callback=on_error,
-                use_loading=False,
+                use_loading=not sync_only,
+                task_desc="同步实例列表",
             )
         else:
             # 回退方案：在当前线程执行（行为与旧版一致，可能阻塞 UI）
@@ -1702,7 +1702,8 @@ class MainWindow(QWidget):
                     self.btn_instance_config.setEnabled(True)
                     return
             
-            dialog = InstanceConfigDialog(self.cvm_manager, self)
+            current_image_id = self.custom_image_combo.currentData()
+            dialog = InstanceConfigDialog(self.cvm_manager, self, current_image_id=current_image_id)
             dialog.exec_()
 
             # 是否是“更新配置”操作（由对话框中的按钮触发）
@@ -1780,9 +1781,10 @@ class MainWindow(QWidget):
             app_window.run_in_background(
                 preload_reference_data,
                 callback=on_done,
-                auto_stop=False,
+                auto_stop=True,
                 err_callback=on_error,
-                use_loading=False,
+                use_loading=True,
+                task_desc="同步配置数据",
             )
         
         # 延迟50ms启动，确保UI状态已更新
@@ -1803,20 +1805,41 @@ class MainWindow(QWidget):
         self.refresh_image_selection()
 
     def load_custom_images(self):
-        """加载自定义镜像列表"""
+        """加载自定义镜像列表（后台线程，避免阻塞 UI）"""
         if not CVM_MANAGER_AVAILABLE:
             return
         if not self.cvm_manager:
             return
-        try:
-            images = self.cvm_manager.get_images("PRIVATE_IMAGE")
+
+        manager = self.cvm_manager
+
+        def _fetch():
+            return manager.get_images("PRIVATE_IMAGE")
+
+        def _on_done(images):
             self.custom_images = images or []
             self.refresh_image_selection()
-        except Exception as e:
+
+        def _on_error(msg):
             self.custom_image_combo.clear()
-            self.custom_image_combo.addItem(f"加载失败: {str(e)}", None)
+            self.custom_image_combo.addItem(f"加载失败: {msg}", None)
             self.custom_image_combo.setEnabled(False)
             self.btn_create.setEnabled(False)
+
+        main_app = self.window()
+        if hasattr(main_app, "run_in_background"):
+            main_app.run_in_background(
+                _fetch,
+                callback=_on_done,
+                auto_stop=True,
+                err_callback=_on_error,
+                use_loading=False,
+            )
+        else:
+            try:
+                _on_done(_fetch())
+            except Exception as e:
+                _on_error(str(e))
 
     def _categorize_images(self, images):
         """按平台归类镜像"""

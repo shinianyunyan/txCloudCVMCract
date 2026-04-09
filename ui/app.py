@@ -9,7 +9,7 @@
 import os
 import logging
 from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QMessageBox, QMenuBar, QMenu, QAction, QApplication, QDialog, QLabel, QPushButton, QHBoxLayout, QStatusBar
-from PyQt5.QtCore import Qt, QTimer, QObject, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QObject, QThread, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QIcon
 from ui.main_window import MainWindow
 from ui.styles import get_style_sheet
@@ -29,32 +29,18 @@ class Worker(QObject):
         self.args = args
         self.kwargs = kwargs
 
+    @pyqtSlot()
     def run(self):
         import logging
         logger = logging.getLogger("CVM_Manager")
         func_name = getattr(self.func, '__name__', str(self.func))
-        
-        # 根据函数名推断任务类型
-        task_desc = func_name
-        if 'create' in func_name.lower() or 'create_task' in func_name:
-            task_desc = "创建实例"
-        elif 'terminate' in func_name.lower():
-            task_desc = "销毁实例"
-        elif 'start' in func_name.lower():
-            task_desc = "启动实例"
-        elif 'stop' in func_name.lower():
-            task_desc = "停止实例"
-        elif 'reset' in func_name.lower():
-            task_desc = "重置密码"
-        
-        logger.info(f"[Worker.run 被调用] 任务: {task_desc}, 函数名: {func_name}")
+        logger.info(f"[Worker.run] 任务: {func_name}")
         try:
-            logger.info(f"开始执行: {task_desc}")
             result = self.func(*self.args, **self.kwargs)
-            logger.info(f"执行完成: {task_desc}")
+            logger.info(f"执行完成: {func_name}")
             self.finished.emit(result)
         except Exception as e:
-            logger.error(f"执行失败: {task_desc}, 错误: {str(e)}")
+            logger.error(f"执行失败: {func_name}, 错误: {str(e)}")
             import traceback
             logger.error(f"错误堆栈: {traceback.format_exc()}")
             self.error.emit(str(e))
@@ -79,7 +65,7 @@ class CVMApp(QMainWindow):
         self.is_loading = False
         self._loading_refcount = 0
         self._loading_suffix = ""  # 动画后缀描述，如"正在提交创建请求"
-        self._bg_threads = []  # 保存后台线程引用，防止被GC
+        self._bg_threads = []  # 保存后台线程和 worker 引用，防止被GC
         self.init_ui()
     
     def init_ui(self):
@@ -115,13 +101,9 @@ class CVMApp(QMainWindow):
         min_height = int(screen_height * 0.5)
         self.setMinimumSize(min_width, min_height)
         
-        # 设置窗口图标，兼容旧路径
-        base_dir = os.path.dirname(__file__)
-        # 当前推荐路径：ui/assets/logo.ico
-        icon_path = os.path.join(base_dir, "assets", "logo.ico")
-        # 兼容旧版本：ui/logo.ico
-        if not os.path.exists(icon_path):
-            icon_path = os.path.join(base_dir, "logo.ico")
+        # 设置窗口图标
+        from utils.utils import get_resource_dir
+        icon_path = os.path.join(get_resource_dir(), "ui", "assets", "logo.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         
@@ -301,16 +283,13 @@ class CVMApp(QMainWindow):
         """)
         
         if dialog.exec_() == QDialog.Accepted:
-            # 停止 Go 预加载服务
-            from core.preload import stop_go_server
-            stop_go_server()
             # 等待所有后台线程完成
             import logging
             logger = logging.getLogger("CVM_Manager")
             if self._bg_threads:
                 logger.info(f"等待 {len(self._bg_threads)} 个后台线程完成...")
                 # 请求所有线程退出
-                for thread in self._bg_threads[:]:  # 使用切片复制，避免迭代时修改列表
+                for thread, _worker in self._bg_threads[:]:  # 使用切片复制，避免迭代时修改列表
                     if thread.isRunning():
                         thread.quit()
                         thread.wait(3000)  # 等待最多3秒
@@ -383,28 +362,34 @@ class CVMApp(QMainWindow):
                 f'<span style="font-weight: bold; color: #f57c00;">处理中{dots}</span>'
             )
 
-    def run_in_background(self, func, callback=None, auto_stop=True, err_callback=None, use_loading=True, *args, **kwargs):
+    def run_in_background(self, func, callback=None, auto_stop=True, err_callback=None, use_loading=True, task_desc=None, *args, **kwargs):
         """
         在独立线程运行耗时任务，避免阻塞 UI。
+        task_desc: 自定义状态栏描述文字（如"同步实例列表"）。
         use_loading=True 时启动加载动画，False 时静默执行。
         """
         import logging
         logger = logging.getLogger("CVM_Manager")
         
-        func_name = getattr(func, '__name__', str(func))
-        task_desc = func_name
-        if 'create' in func_name.lower() or 'create_task' in func_name:
-            task_desc = "创建实例"
-        elif 'terminate' in func_name.lower():
-            task_desc = "销毁实例"
-        elif 'start' in func_name.lower():
-            task_desc = "启动实例"
-        elif 'stop' in func_name.lower():
-            task_desc = "停止实例"
-        elif 'reset' in func_name.lower():
-            task_desc = "重置密码"
+        if not task_desc:
+            func_name = getattr(func, '__name__', str(func))
+            # 函数名 → 友好描述映射
+            _name_map = {
+                'create_task': '创建实例', 'terminate': '销毁实例',
+                'start': '启动实例', 'stop': '停止实例',
+                'reset': '重置密码', 'sync_task': '同步实例列表',
+                'preload_reference_data': '同步配置数据',
+                'poll_task': '查询状态', '_fetch': '加载镜像列表',
+            }
+            task_desc = _name_map.get(func_name)
+            if not task_desc:
+                for key, desc in _name_map.items():
+                    if key in func_name.lower():
+                        task_desc = desc
+                        break
+            task_desc = task_desc or '处理中'
         
-        logger.info(f"启动线程执行: {task_desc}")
+        logger.info(f"启动后台任务: {task_desc}")
         
         if use_loading:
             self.start_loading_status(task_desc)
@@ -425,7 +410,7 @@ class CVMApp(QMainWindow):
                 import traceback
                 logger.error(f"回调异常堆栈: {traceback.format_exc()}")
                 self._safe_show_message(f"操作完成但处理结果时出错: {cb_err}", "error")
-            self._bg_threads = [t for t in self._bg_threads if t is not thread]
+            self._bg_threads = [(t, w) for t, w in self._bg_threads if t is not thread]
 
         def handle_error(msg):
             logger.error(f"线程执行失败: {task_desc}, 错误: {msg}")
@@ -441,7 +426,7 @@ class CVMApp(QMainWindow):
                 import traceback
                 logger.error(f"错误回调异常堆栈: {traceback.format_exc()}")
                 self._safe_show_message(f"处理错误信息时出错: {cb_err}", "error")
-            self._bg_threads = [t for t in self._bg_threads if t is not thread]
+            self._bg_threads = [(t, w) for t, w in self._bg_threads if t is not thread]
 
         # 连接信号
         worker.finished.connect(handle_finished)
@@ -452,14 +437,11 @@ class CVMApp(QMainWindow):
         worker.error.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         
-        # 使用 DirectConnection 确保 run 立即执行，避免事件循环问题
-        def start_worker():
-            logger.info(f"[线程事件循环启动] 任务: {task_desc}")
-            worker.run()
-        
-        thread.started.connect(start_worker)
+        # 直接连接 worker.run，使用 DirectConnection 确保在新线程中执行
+        # （started 信号从新线程发出，DirectConnection = 在发射线程立即调用）
+        thread.started.connect(worker.run, Qt.DirectConnection)
 
-        self._bg_threads.append(thread)
+        self._bg_threads.append((thread, worker))  # 同时保存 worker 防止 GC
         logger.info(f"[启动线程] 任务: {task_desc}")
         thread.start()
 

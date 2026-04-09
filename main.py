@@ -11,12 +11,11 @@
 """
 import sys
 import os
-import atexit
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt, QCoreApplication
 from PyQt5.QtGui import QIcon
 from utils.utils import setup_logger
-from core.preload import preload_reference_data, stop_go_server
+from core.preload import preload_reference_data
 
 # 启用高 DPI 支持，让界面在高分屏上保持清晰
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
@@ -31,14 +30,13 @@ from config.config_manager import ensure_config_file
 
 if __name__ == "__main__":
     ensure_config_file()
-    # 注册退出时清理 Go 预加载服务的钩子
-    atexit.register(stop_go_server)
     
     # 创建 Qt 应用实例
     app = QApplication(sys.argv)
     app.setApplicationName("腾讯云CVM管理工具")
     # 设置应用级图标（影响任务栏图标）
-    icon_path = os.path.join(os.path.dirname(__file__), "ui", "assets", "logo.ico")
+    from utils.utils import get_resource_dir
+    icon_path = os.path.join(get_resource_dir(), "ui", "assets", "logo.ico")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
     
@@ -111,7 +109,7 @@ if __name__ == "__main__":
         finally:
             preload_done.set()
     
-    update_splash_text("正在连接 Go 服务")
+    update_splash_text("正在同步云端数据")
     preload_thread = threading.Thread(target=_run_preload, daemon=True)
     preload_thread.start()
     

@@ -52,6 +52,13 @@ cvm_manager.log
 *.db
 *.sqlite
 
+# Go 编译产物（头文件不需要提交，DLL 需要）
+go_preload/*.h
+go_preload/go_preload_server.exe
+
+# PyInstaller
+*.spec
+
 # API说明文档
 API说明文档/
 

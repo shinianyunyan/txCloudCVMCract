@@ -268,7 +268,8 @@ class InstanceList(QTableWidget):
         label = QLabel(text)
         label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         
-        assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
+        from utils.utils import get_resource_dir
+        assets_dir = os.path.join(get_resource_dir(), "ui", "assets")
         copy_icon = QIcon(os.path.join(assets_dir, "复制.svg"))
         copied_icon = QIcon(os.path.join(assets_dir, "已复制.svg"))
         
@@ -318,7 +319,8 @@ class InstanceList(QTableWidget):
         label = QLabel(masked)
         label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         
-        assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
+        from utils.utils import get_resource_dir
+        assets_dir = os.path.join(get_resource_dir(), "ui", "assets")
         show_icon = QIcon(os.path.join(assets_dir, "眼睛_显示.svg"))
         hide_icon = QIcon(os.path.join(assets_dir, "眼睛_隐藏.svg"))
         copy_icon = QIcon(os.path.join(assets_dir, "复制.svg"))

@@ -10,7 +10,7 @@ import json
 import os
 import tempfile
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton, QSpinBox, QComboBox, QLineEdit, QLabel, QMessageBox, QDialogButtonBox, QScrollArea, QWidget
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer
 from PyQt5.QtGui import QIntValidator
 from config.config_manager import get_instance_config, save_instance_config
 from utils.db_manager import get_db
@@ -34,9 +34,10 @@ class InstanceConfigDialog(QDialog):
         - 校验输入、展示价格并持久化配置。
     """
     
-    def __init__(self, cvm_manager=None, parent=None):
+    def __init__(self, cvm_manager=None, parent=None, current_image_id=None):
         super().__init__(parent)
         self.cvm_manager = cvm_manager
+        self.current_image_id = current_image_id  # 主窗口当前选中的镜像 ID
         # 标记是否为“更新配置”操作，由主窗口根据该标记决定后续行为
         self.is_updating_config = False
         self.config_data = None
@@ -430,9 +431,8 @@ class InstanceConfigDialog(QDialog):
         memory_text = self.memory_edit.text().strip()
         region_data = self.region_combo.currentData()
         zone_data = self.zone_combo.currentData()
-        # 镜像已移至主窗口选择，询价时使用已保存的配置值
-        existing_config = self.config_data or get_instance_config()
-        image_data = existing_config.get("default_image_id")
+        # 镜像已移至主窗口选择，优先使用主窗口传入的当前镜像
+        image_data = self.current_image_id or (self.config_data or get_instance_config()).get("default_image_id")
         disk_type = self.disk_type_combo.currentData() or self.disk_type_combo.currentText()
         disk_size = self.disk_size_edit.value()
         bandwidth = self.bandwidth_edit.value()
@@ -469,6 +469,7 @@ class InstanceConfigDialog(QDialog):
                 super().__init__()
                 self.func = func
 
+            @pyqtSlot()
             def run(self):
                 try:
                     res = self.func()
@@ -513,7 +514,7 @@ class InstanceConfigDialog(QDialog):
                 self._price_query_pending = False
                 self.schedule_price_update()
 
-        self._price_thread.started.connect(self._price_worker.run)
+        self._price_thread.started.connect(self._price_worker.run, Qt.DirectConnection)
         self._price_worker.finished.connect(on_done)
         self._price_worker.error.connect(on_error)
         self._price_worker.finished.connect(self._price_thread.quit)
@@ -555,9 +556,9 @@ class InstanceConfigDialog(QDialog):
         memory_text = self.memory_edit.text().strip()
         region_data = self.region_combo.currentData()
         zone_data = self.zone_combo.currentData()
-        # 镜像已移至主窗口选择，保存时保留原有配置值
+        # 镜像已移至主窗口选择，优先使用主窗口传入的当前镜像
         existing_config = self.config_data or get_instance_config()
-        image_data = existing_config.get("default_image_id")
+        image_data = self.current_image_id or existing_config.get("default_image_id")
         
         if not cpu_text or not cpu_text.isdigit() or int(cpu_text) <= 0:
             self._show_message("请输入有效的CPU核数（大于0的数字）", "warning")

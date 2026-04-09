@@ -9,8 +9,31 @@
 """
 import logging
 import os
+import sys
 from typing import List, Dict, Any, Tuple
 from datetime import datetime
+
+
+def get_app_dir() -> str:
+    """获取应用程序的「可写数据」根目录（数据库、日志等持久性文件）。
+    
+    - 源码运行时：项目根目录
+    - PyInstaller 打包后：exe 所在目录
+    """
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def get_resource_dir() -> str:
+    """获取应用程序的「只读资源」根目录（DLL、图标、SVG 等打包资源）。
+    
+    - 源码运行时：项目根目录
+    - PyInstaller --onefile 打包后：_MEIPASS 临时解压目录
+    """
+    if getattr(sys, 'frozen', False):
+        return sys._MEIPASS
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
 def setup_logger(name: str = "CVM_Manager", log_file: str = "cvm_manager.log", level: str = "INFO") -> logging.Logger:
@@ -32,7 +55,9 @@ def setup_logger(name: str = "CVM_Manager", log_file: str = "cvm_manager.log", l
     if logger.handlers:
         return logger
     
-    # 文件处理器，完整持久化日志
+    # 文件处理器，完整持久化日志（写入 exe 所在目录）
+    if not os.path.isabs(log_file):
+        log_file = os.path.join(get_app_dir(), log_file)
     file_handler = logging.FileHandler(log_file, encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)
     

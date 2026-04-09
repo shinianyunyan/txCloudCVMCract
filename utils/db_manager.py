@@ -20,7 +20,8 @@ class DBManager:
     """SQLite 管理器，封装实例与配置缓存的读写。"""
 
     def __init__(self, db_path: Optional[str] = None):
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data"))
+        from utils.utils import get_app_dir
+        base_dir = os.path.join(get_app_dir(), "data")
         os.makedirs(base_dir, exist_ok=True)
         self.db_path = db_path or os.path.join(base_dir, "cvm_cache.db")
         self._init_tables()
