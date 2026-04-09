@@ -41,7 +41,7 @@
 
 | 主界面 | 主界面（实例列表） |
 |:---:|:---:|
-| ![mainWindow](images/mainWindow.png) | ![mainWindow2](images/mainwindow2.png) |
+| ![mainWindow](images/mainWindow.png) | ![mainWindow2](images/mainWindow2.png) |
 
 | 设置 | 实例配置 | 下发指令 |
 |:---:|:---:|:---:|
